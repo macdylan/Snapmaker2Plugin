@@ -1,0 +1,8 @@
+{
+    "name": "Snapmaker 2.0 Connection",
+    "author": "https://github.com/macdylan",
+    "version": "0.1",
+    "api": 6,
+    "supported_sdk_versions": ["6.0.0", "7.0.0"],
+    "description": "Output Device plugin for Snapmaker 2.0"
+}
