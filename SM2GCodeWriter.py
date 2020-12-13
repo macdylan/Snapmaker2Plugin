@@ -66,8 +66,7 @@ class SM2GCodeWriter(MeshWriter):
         # must be called from the main thread because of OpenGL
         Logger.log("d", "Creating thumbnail image...")
         try:
-            self._snapshot = Snapshot.snapshot(width=300, height=300)
-            # self._snapshot = snapshot.convertToFormat(QImage.Format_Grayscale8)
+            self._snapshot = Snapshot.snapshot(width=300, height=300).convertToFormat(QImage.Format_Indexed8)
         except Exception:
             Logger.logException("w", "Failed to create snapshot image")
             self._snapshot = None  # Failing to create thumbnail should not fail creation of UFP
@@ -128,7 +127,7 @@ class SM2GCodeWriter(MeshWriter):
             thumbnail_buffer = QBuffer()
             thumbnail_buffer.open(QBuffer.ReadWrite)
             thumbnail_image = self._snapshot
-            thumbnail_image.save(thumbnail_buffer, "JPEG", 45)
+            thumbnail_image.save(thumbnail_buffer, "PNG")
             base64_bytes = base64.b64encode(thumbnail_buffer.data())
             thumbnail_buffer.close()
         else:
@@ -156,7 +155,7 @@ class SM2GCodeWriter(MeshWriter):
             stream.write(header_buffer[2]) # Filament used
             stream.write(header_buffer[3]) # Layer height
             stream.write("\n\n;header_type: 3dp\n")
-            stream.write(";thumbnail: data:image/jpeg;base64,")
+            stream.write(";thumbnail: data:image/png;base64,")
             stream.write(base64_bytes.decode("ascii"))
             stream.write("\n")
             stream.write(";file_total_lines: %s\n" % model_line_count)

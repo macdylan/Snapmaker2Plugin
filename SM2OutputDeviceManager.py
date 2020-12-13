@@ -2,7 +2,6 @@ import threading
 import socket
 import requests
 from io import StringIO
-from typing import cast
 
 from cura.CuraApplication import CuraApplication
 from cura.PrinterOutput.NetworkedPrinterOutputDevice import NetworkedPrinterOutputDevice, AuthState
@@ -11,9 +10,8 @@ from cura.PrinterOutput.PrinterOutputDevice import ConnectionState, ConnectionTy
 from UM.Signal import Signal
 from UM.Logger import Logger
 from UM.Message import Message
+from UM.FileHandler.WriteFileJob import WriteFileJob
 from UM.OutputDevice.OutputDevicePlugin import OutputDevicePlugin
-from UM.Mesh.MeshWriter import MeshWriter
-from UM.PluginRegistry import PluginRegistry
 
 from .SM2GCodeWriter import SM2GCodeWriter
 
@@ -109,11 +107,14 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
         self._api_prefix = ":8080/api/v1"
         self._auth_token = ""
         self._gcode_stream = StringIO()
+        self._writing = False
 
         self._setInterface()
 
         self._authentication_state = AuthState.NotAuthenticated
         self.authenticationStateChanged.connect(self._onAuthenticationStateChanged)
+
+        self.connectionStateChanged.connect(self._onConnectionStateChanged)
 
         self._progress = PrintJobUploadProgressMessage()
         self._need_auth = PrintJobNeedAuthMessage(self)
@@ -124,6 +125,10 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
         self.setShortDescription("Send to {}".format(self._address))
         self.setDescription("Send to {}".format(self._id))
         self.setConnectionText("Connected to {}".format(self._id))
+
+    def _onConnectionStateChanged(self):
+        if self.connectionState == ConnectionState.Busy:
+            Message(title="Unable to upload", text="{} is busy".format(self._id)).show()
 
     def _setAuthState(self, state):
         self._authentication_state = state
@@ -139,17 +144,24 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
             self._need_auth.hide()
 
     def requestWrite(self, nodes, file_name=None, limit_mimetypes=False, file_handler=None, filter_by_machine=False, **kwargs) -> None:
-        if self._progress.visible:
+        if self._progress.visible or self._writing:
             return
 
         self.writeStarted.emit(self)
+        self._writing = True
 
         self._gcode_stream = StringIO()
-        writer = SM2GCodeWriter()
-        if not writer.write(self._gcode_stream, None):
-            Logger.log("e", "GCodeWriter failed: %s", writer.getInformation())
-            return
+        job = WriteFileJob(SM2GCodeWriter(), self._gcode_stream, nodes, SM2GCodeWriter.OutputMode.TextMode)
+        job.finished.connect(self._onWriteJobFinished)
 
+        message = Message(title="Preparing for upload", progress=-1, lifetime=0, dismissable=False, use_inactivity_timer=False)
+        message.show()
+
+        job.setMessage(message)
+        job.start()
+
+    def _onWriteJobFinished(self, job):
+        self._writing = False
         self._startUpload()
 
     def connect(self) -> str:
@@ -172,6 +184,15 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
             conn = requests.get("http://" + self._address + self._api_prefix + "/status", params={"token": self._auth_token})
             Logger.log("d", "check_status: %s", conn.status_code)
             if conn.status_code == 200:
+                resp = conn.json()
+                status = resp.get("status", "UNKNOWN")
+                Logger.log("d", "Printer status is %s" % status)
+                if status == "IDLE":
+                    self.setConnectionState(ConnectionState.Connected)
+                elif status in ("RUNNING", "PAUSED", "STOPPED"):
+                    self.setConnectionState(ConnectionState.Busy)
+                else:
+                    self.setConnectionState(ConnectionState.Error)
                 self._setAuthState(AuthState.Authenticated)
 
             if conn.status_code == 401:
@@ -184,21 +205,26 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
             self._setAuthState(AuthState.NotAuthenticated)
 
     def _startUpload(self):
-        name = CuraApplication.getInstance().getPrintInformation().jobName.strip()
-        if name is "":
-            name = "untitled_print"
-        file_name = "%s.gcode" % name
-
         self._auth_token = self.connect()
         Logger.log("d", "Token: %s", self._auth_token)
         if not self._auth_token:
             return
 
         self.check_status()
+
+        if self.connectionState != ConnectionState.Connected:
+            return
+
         if self.authenticationState != AuthState.Authenticated:
             return
 
         self._progress.show()
+
+        name = CuraApplication.getInstance().getPrintInformation().jobName.strip()
+        if name is "":
+            name = "untitled_print"
+        file_name = "%s.gcode" % name
+
         parts = [
             self._createFormPart("name=token", self._auth_token.encode()),
             self._createFormPart("name=file; filename=\"{}\"".format(file_name), self._gcode_stream.getvalue().encode())
