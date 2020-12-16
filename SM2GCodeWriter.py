@@ -155,9 +155,10 @@ class SM2GCodeWriter(MeshWriter):
             stream.write(header_buffer[2]) # Filament used
             stream.write(header_buffer[3]) # Layer height
             stream.write("\n\n;header_type: 3dp\n")
-            stream.write(";thumbnail: data:image/png;base64,")
-            stream.write(base64_bytes.decode("ascii"))
-            stream.write("\n")
+            if base64_bytes:
+                stream.write(";thumbnail: data:image/png;base64,")
+                stream.write(base64_bytes.decode("ascii"))
+                stream.write("\n")
             stream.write(";file_total_lines: %s\n" % model_line_count)
             stream.write(";estimated_time(s): %s\n" % estiTime)
             stream.write(";nozzle_temperature(°C): %s\n" % printTemp)

@@ -2,6 +2,7 @@ import threading
 import socket
 import requests
 from io import StringIO
+from PyQt5.QtCore import QTimer
 
 from cura.CuraApplication import CuraApplication
 from cura.PrinterOutput.NetworkedPrinterOutputDevice import NetworkedPrinterOutputDevice, AuthState
@@ -144,7 +145,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
             self._need_auth.hide()
 
     def requestWrite(self, nodes, file_name=None, limit_mimetypes=False, file_handler=None, filter_by_machine=False, **kwargs) -> None:
-        if self._progress.visible or self._writing:
+        if self._progress.visible or self._need_auth.visible or self._writing:
             return
 
         self.writeStarted.emit(self)
@@ -162,6 +163,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
 
     def _onWriteJobFinished(self, job):
         self._writing = False
+        self._auth_token = self.connect()
         self._startUpload()
 
     def connect(self) -> str:
@@ -169,8 +171,13 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
         try:
             conn = requests.post("http://" + self._address + self._api_prefix + "/connect",
                                 data={"token": self._auth_token})
+            Logger.log("d", "/connect: %d from %s", conn.status_code, self._address)
             if conn.status_code == 200:
                 return conn.json().get("token")
+            elif conn.status_code == 403 and self._auth_token:
+                # expired
+                self._auth_token = ""
+                return self.connect()
             else:
                 Message(text="Please check the touchscreen and try again.", lifetime=10, dismissable=True).show()
                 return self._auth_token
@@ -182,10 +189,10 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
     def check_status(self):
         try:
             conn = requests.get("http://" + self._address + self._api_prefix + "/status", params={"token": self._auth_token})
-            Logger.log("d", "check_status: %s", conn.status_code)
+            Logger.log("d", "/status: %d from %s", conn.status_code, self._address)
             if conn.status_code == 200:
-                resp = conn.json()
-                status = resp.get("status", "UNKNOWN")
+
+                status = conn.json().get("status", "UNKNOWN")
                 Logger.log("d", "Printer status is %s" % status)
                 if status == "IDLE":
                     self.setConnectionState(ConnectionState.Connected)
@@ -193,6 +200,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
                     self.setConnectionState(ConnectionState.Busy)
                 else:
                     self.setConnectionState(ConnectionState.Error)
+
                 self._setAuthState(AuthState.Authenticated)
 
             if conn.status_code == 401:
@@ -205,7 +213,6 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
             self._setAuthState(AuthState.NotAuthenticated)
 
     def _startUpload(self):
-        self._auth_token = self.connect()
         Logger.log("d", "Token: %s", self._auth_token)
         if not self._auth_token:
             return
@@ -229,10 +236,10 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
             self._createFormPart("name=token", self._auth_token.encode()),
             self._createFormPart("name=file; filename=\"{}\"".format(file_name), self._gcode_stream.getvalue().encode())
         ]
+        self._gcode_stream = StringIO()
         self.postFormWithParts("/upload", parts,
                         on_finished=self._onUploadCompleted,
                         on_progress=self._onUploadProgress)
-        self._gcode_stream = StringIO()
 
     def _onUploadCompleted(self, reply):
         self._progress.hide()
@@ -240,7 +247,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
             Message(
                 title="Sent to {}".format(self._id),
                 text="Start print on the touchscreen.",
-                lifetime=6).show()
+                lifetime=0).show()
             self.writeFinished.emit()
         else:
             Message(title="Error", text=reply.errorString(), lifetime=0, dismissable=True).show()
@@ -287,9 +294,23 @@ class PrintJobNeedAuthMessage(Message):
             use_inactivity_timer = False
         )
         self._device = device
-        self.addAction("", "Continue", "", "")
-        self.actionTriggered.connect(self._onCheck)
+        self.setProgress(-1)
+        # self.addAction("", "Continue", "", "")
+        # self.actionTriggered.connect(self._onCheck)
+        self._gTimer = QTimer()
+        self._gTimer.setInterval(1.5 * 1000)
+        self._gTimer.timeout.connect(lambda: self._onCheck(None, None))
+        self.inactivityTimerStart.connect(self._startTimer)
+        self.inactivityTimerStop.connect(self._stopTimer)
+
+    def _startTimer(self):
+        if self._gTimer and not self._gTimer.isActive():
+            self._gTimer.start()
+
+    def _stopTimer(self):
+        if self._gTimer and self._gTimer.isActive():
+            self._gTimer.stop()
 
     def _onCheck(self, messageId, actionId):
         self._device.checkAndStartUpload()
-        self.hide()
+        # self.hide()
