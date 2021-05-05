@@ -117,7 +117,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
 
         self.connectionStateChanged.connect(self._onConnectionStateChanged)
 
-        self._progress = PrintJobUploadProgressMessage()
+        self._progress = PrintJobUploadProgressMessage(self)
         self._need_auth = PrintJobNeedAuthMessage(self)
 
     def _setInterface(self):
@@ -264,7 +264,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
 
 
 class PrintJobUploadProgressMessage(Message):
-    def __init__(self):
+    def __init__(self, device):
         super().__init__(
             title = "Sending Print Job",
             text = "Uploading print job to printer:",
@@ -273,6 +273,12 @@ class PrintJobUploadProgressMessage(Message):
             dismissable = False,
             use_inactivity_timer = False
         )
+        self._device = device
+        self._gTimer = QTimer()
+        self._gTimer.setInterval(3 * 1000)
+        self._gTimer.timeout.connect(lambda: self._heartbeat())
+        self.inactivityTimerStart.connect(self._startTimer)
+        self.inactivityTimerStop.connect(self._stopTimer)
 
     def show(self):
         self.setProgress(0)
@@ -282,6 +288,17 @@ class PrintJobUploadProgressMessage(Message):
         if not self._visible:
             super().show()
         self.setProgress(percentage)
+
+    def _heartbeat(self):
+        self._device.check_status()
+
+    def _startTimer(self):
+        if self._gTimer and not self._gTimer.isActive():
+            self._gTimer.start()
+
+    def _stopTimer(self):
+        if self._gTimer and self._gTimer.isActive():
+            self._gTimer.stop()
 
 
 class PrintJobNeedAuthMessage(Message):
