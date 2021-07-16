@@ -28,7 +28,7 @@ Install the 3 provided profile files from [snapmaker official cura profiles page
     ⚠️ If your snapmaker name or IP address does not appear try the following steps:
     1. Ensure you snapmaker is connected to wifi by checking your wireless router or checking on the Snapmakers touchscreen 
     2. Wait 5-10 seconds, Cura continuously looks for all compatible devices in the LAN and displays them automatically
-    4. Restart Snapmaker 2 and wait for touchscreen to full start
+    4. Restart Snapmaker 2 and wait for touchscreen to fully start and ensure it is connected to the right wireless lan
     3. Check your computer's firewall to see if Cura access to the local area network is blocked (win10 is blocked by default)
     5. Check the router settings to see if UDP broadcasting is blocked
     6. If possible, make sure that your computer and the  Snapmaker 2 have good wifi reception with your router to eliminate the chance of network issues.
