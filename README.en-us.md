@@ -21,7 +21,7 @@ Install the 3 provided profile files from [snapmaker official cura profiles page
 4. Quit and restart Cura
 
 # Usage
-- After slicing a model, the save file / device selection menu appears at the lower left of the worksapce
+- After slicing a model, the save file / device selection menu appears at the lower right of the worksapce
 
     ![](_snapshots/sendto.png)
 
