@@ -5,7 +5,7 @@
 
 # Installation
 ## Pre-requisites
-Install the 3 provided profile files from [snapmaker official cura profiles page](https://support.snapmaker.com/hc/en-us/articles/360044341034) (they are at bottom of page)
+Install the 3 provided profile files from [snapmaker official cura profiles page](https://support.snapmaker.com/hc/en-us/articles/360044341034) (they are at bottom of page).
 
 ## From Cura Marketplace
 1. Click the Marketplace button in upper right of main screen
@@ -43,7 +43,7 @@ Install the 3 provided profile files from [snapmaker official cura profiles page
 
     ![](_snapshots/preview.jpg)
 
-- You can also use Save to File to save files in Snapmaker G-code file format
+- You can also use Save to save files in Snapmaker G-code file format to disk if required
 
     ![](_snapshots/savetofile.png)
 
