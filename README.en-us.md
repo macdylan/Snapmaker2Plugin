@@ -21,6 +21,7 @@ Install the 3 provided profile files from [snapmaker official cura profiles page
 4. Quit and restart Cura
 
 # Usage
+- Click blue slice button in the workspace.
 - After slicing a model, the save file / device selection menu appears at the lower right of the worksapce
 
     ![](_snapshots/sendto.png)
@@ -34,7 +35,15 @@ Install the 3 provided profile files from [snapmaker official cura profiles page
     6. If possible, make sure that your computer and the  Snapmaker 2 have good wifi reception with your router to eliminate the chance of network issues.
 
 - Select the device you want to send and click Send to
-- Tap Yes in Snapmaker 2 touchscreen WiFi Connection Request
+- Tap Yes in Snapmaker 2 touchscreen WiFi Connection Request (only required the first time after boot)
+- Tap disconnect on the touchscree or wait for touchscreen to return to home
+- Tap start buton on touchscreen
+- Tap files that was just downloaded
+- Tap start (or adjust settings as needed)
+
+Once printing has started you can close Cura as all progress is monitored on the Snapmakers touscreen
+
+
 - Go back to Cura and click the Continue button and wait for the file to be sent
 
     ![](_snapshots/screen_auth.png)
