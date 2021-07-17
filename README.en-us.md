@@ -42,14 +42,10 @@ Install the 3 provided profile files from [snapmaker official cura profiles page
 
 Once printing has started you can close Cura as all progress is monitored on the Snapmakers touchscreen
 
-
-- Go back to Cura and click the Continue button and wait for the file to be sent
-- Confirm printing on the Snapmaker 2 touchscreen
-- You can also use Save to save files in Snapmaker G-code file format to disk if required
-
+You can also use Save to save files in Snapmaker G-code file format to disk if required
     ![](_snapshots/savetofile.png)
 
-## Troubleshooting Snapmaker Discovery
+# Troubleshooting Snapmaker Discovery
 ⚠️ If your snapmaker name or IP address does not appear try the following steps:
    1. Ensure you snapmaker is connected to wifi by checking your wireless router or checking on the Snapmakers touchscreen 
    2. Wait 5-10 seconds, Cura continuously looks for all compatible devices in the LAN and displays them automatically
@@ -58,7 +54,7 @@ Once printing has started you can close Cura as all progress is monitored on the
    5. Check the router settings to see if UDP broadcasting is blocked
    6. If possible, make sure that your computer and the  Snapmaker 2 have good wifi reception with your router to eliminate the chance of network issues.
 
-    Please note that the instructions above are valid on firmware 1.12.1 and 1.12.3; touchscreen UI flows do vary by version; also as of writing wifi network connecitvity of the A350 can be unreliable.
+Please note that the instructions above are valid on firmware 1.12.1 and 1.12.3; touchscreen UI flows do vary by version; also as of writing wifi network connecitvity of the A350 can be unreliable.
 
 
 ---
