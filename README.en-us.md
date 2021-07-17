@@ -34,7 +34,7 @@ Install the 3 provided profile files from [snapmaker official cura profiles page
 - Tap Yes in Snapmaker 2 touchscreen WiFi Connection Request (only required the first time after boot)
 
     ![](_snapshots/touchscreen_auth.png)
-
+  
 - Wait for file upload process to complete
 
 - Tap disconnect on the touchscreen or wait for touchscreen to return to home
