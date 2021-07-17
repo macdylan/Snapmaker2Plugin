@@ -1,3 +1,5 @@
+
+[Please click here for English README.md](README.en-us.md)
 # Snapmaker 2 Plugin for Cura
 - 无需配置，通过 UDP 广播自动查找局域网内所有 Snapmaker 2 设备
 - 无需保存文件，使用网络直接发送到打印机进行作业
