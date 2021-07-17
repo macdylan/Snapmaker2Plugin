@@ -27,11 +27,16 @@ Install the 3 provided profile files from [snapmaker official cura profiles page
 
     ![](_snapshots/sendto.png)
 - Select the device you want to send and click Send to
-- If this is the firstime you have used this plugin you will be prompted to tap yes on the Snapmaker touchscreen
+- You will only be ptompted for this first time after A350 starts up.
 
     ![](_snapshots/screen_auth.png)
 
 - Tap Yes in Snapmaker 2 touchscreen WiFi Connection Request (only required the first time after boot)
+
+    ![](_snapshots/touchscreen_auth.png)
+
+- Wait for file upload process to complete
+
 - Tap disconnect on the touchscreen or wait for touchscreen to return to home
 - Tap start buton on touchscreen
 - Navigate to files and choose the file that was just uploaded to your snapmaker
@@ -49,7 +54,7 @@ You can also use Save to save files in Snapmaker G-code file format to disk if r
 ⚠️ If your snapmaker name or IP address does not appear try the following steps:
    1. Ensure you snapmaker is connected to wifi by checking your wireless router or checking on the Snapmakers touchscreen 
    2. Wait 5-10 seconds, Cura continuously looks for all compatible devices in the LAN and displays them automatically
-   3. Restart Snapmaker 2 (powroff for at least 15 seconds) and wait for touchscreen to fully start and ensure it is connected to the right wireless lan
+   3. Restart Snapmaker 2 (poweroff for **at least 15 seconds**) and wait for touchscreen to fully start and ensure it is connected to the right wireless lan
    4. Check your computer's firewall to see if Cura access to the local area network is blocked (win10 is blocked by default)
    5. Check the router settings to see if UDP broadcasting is blocked
    6. If possible, make sure that your computer and the  Snapmaker 2 have good wifi reception with your router to eliminate the chance of network issues.
