@@ -13,6 +13,7 @@ from cura.Machines.ContainerTree import ContainerTree
 
 # from cura.CuraApplication import CuraApplication
 from cura.Snapshot import Snapshot
+from cura.CuraApplication import CuraApplication
 from cura.Utils.Threading import call_on_qt_thread
 # from cura.UI import PrintInformation
 from PyQt5.QtCore import QBuffer
@@ -62,16 +63,19 @@ class SM2GCodeWriter(MeshWriter):
         super().__init__(add_to_recent_files = False)
         self._application = Application.getInstance()
 
+    @call_on_qt_thread
     def _createSnapshot(self, *args):
-        # must be called from the main thread because of OpenGL
         Logger.log("d", "Creating thumbnail image...")
+        if not CuraApplication.getInstance().isVisible:
+            Logger.log("w", "Can't create snapshot when renderer not initialized.")
+            return None
         try:
-            self._snapshot = Snapshot.snapshot(width=300, height=300).convertToFormat(QImage.Format_Indexed8)
+            ss = Snapshot.snapshot(width=300, height=300).convertToFormat(QImage.Format_Indexed8)
         except Exception:
             Logger.logException("w", "Failed to create snapshot image")
-            self._snapshot = None  # Failing to create thumbnail should not fail creation of UFP
+            return None
+        return ss
 
-    @call_on_qt_thread
     def write(self, stream, nodes, mode = MeshWriter.OutputMode.TextMode):
         """Writes the g-code for the entire scene to a stream.
 
@@ -98,87 +102,93 @@ class SM2GCodeWriter(MeshWriter):
         gcode_dict = getattr(scene, "gcode_dict")
         gcode_list = gcode_dict.get(active_build_plate, None)
 
-        # Get some vars (I cannot find the correct value)
         printTemp = None
         bedTemp = None
         for x in gcode_list:
             if ("M190" in x or "M140" in x ) and bedTemp is None:
-                for y in re.findall(r"(M140|M190) S(\d+)", x):
-                    #Logger.log("d","Bed:" + y[1])
+                for y in re.findall(r"(M190|M140) S(\d+)", x):
                     bedTemp = y[1]
-                    break
+                    break;
             if ("M109" in x or "M104" in x ) and printTemp is None:
                 for y in re.findall(r"(M109|M104) S(\d+)", x):
-                    #Logger.log("d","Extruder:" + y[1])
                     printTemp = y[1]
-                    break
-            if printTemp is not None and bedTemp is not None:
-                break
+                    break;
+            if not (printTemp is None or bedTemp is None):
+                break;
+
         print_info =  Application.getInstance().getPrintInformation()
         feature_times = print_info.getFeaturePrintTimes()
         estiTime = 0 #in Seconds
         for x in feature_times:
-            #Logger.log("d",x+":"+str(int(feature_times[x])) + " Seconds")
             estiTime += int(feature_times[x])
+
         # Generate snapshot
-        self._createSnapshot()
-        if self._snapshot:
-            Logger.log("d","Snapshot created.")
+        base64_bytes = b""
+        ss = self._createSnapshot()
+        if ss:
             thumbnail_buffer = QBuffer()
             thumbnail_buffer.open(QBuffer.ReadWrite)
-            thumbnail_image = self._snapshot
-            thumbnail_image.save(thumbnail_buffer, "PNG")
+            ss.save(thumbnail_buffer, "PNG")
             base64_bytes = base64.b64encode(thumbnail_buffer.data())
             thumbnail_buffer.close()
-        else:
-            base64_bytes = b""
+
         # Start header
-        stream.write(";Header Start\n\n")
         gcode_buffer = ""
         header_buffer = False
-        model_line_count = 0
+        model_line_count = 22
         if gcode_list is not None:
             has_settings = False
-            for gcode in gcode_list:
-                if gcode[:len(self._setting_keyword)] == self._setting_keyword:
-                    has_settings = True
-                # Move FLAVOR/TIME/... block to top
-                if "FLAVOR" not in gcode:
-                    model_line_count += len(gcode.splitlines()) # Add lines to model_line_count for header
-                    gcode_buffer += gcode + "\n" # Add extra newline for each layer, for readability of gcode
+            is_gcode_file = False
+            for line, gcode in enumerate(gcode_list):
+                if line is 0 and len(re.findall(r"\n", gcode)) is 1:
+                    is_gcode_file = True
+
+                if is_gcode_file:
+                    gcode_buffer += gcode
+
                 else:
-                    # Split header lines and write to buffer
-                    header_buffer = gcode.splitlines(keepends=True)
-            # Combine everything
-            stream.write(header_buffer[0]) # FLAVOR
-            stream.write(header_buffer[1]) # TIME
-            stream.write(header_buffer[2]) # Filament used
-            stream.write(header_buffer[3]) # Layer height
-            stream.write("\n\n;header_type: 3dp\n")
-            if base64_bytes:
-                stream.write(";thumbnail: data:image/png;base64,")
-                stream.write(base64_bytes.decode("ascii"))
-                stream.write("\n")
-            stream.write(";file_total_lines: %s\n" % model_line_count)
-            stream.write(";estimated_time(s): %s\n" % estiTime)
-            stream.write(";nozzle_temperature(°C): %s\n" % printTemp)
-            stream.write(";build_plate_temperature(°C): %s\n" % bedTemp)
-            stream.write(header_buffer[7].replace("MAXX:","max_x(mm): ")) # max_x
-            stream.write(header_buffer[8].replace("MAXY:","max_y(mm): ")) # max_y
-            stream.write(header_buffer[9].replace("MAXZ:","max_z(mm): ")) # max_z
-            stream.write(header_buffer[4].replace("MINX:","min_x(mm): ")) # min_x
-            stream.write(header_buffer[5].replace("MINY:","min_y(mm): ")) # min_y
-            stream.write(header_buffer[6].replace("MINZ:","min_z(mm): ")) # min_z
-            stream.write("\n;Header End\n\n")
-            # Add some useful comments, conform Luban generated code, and/or what I deem usefull
-            gcode_buffer = re.sub(r"(M190 S\d+)",r"\1 ;Wait for Bed Temperature", gcode_buffer)
-            gcode_buffer = re.sub(r"(M109 S\d+)",r"\1 ;Wait for Hotend Temperature", gcode_buffer)
-            gcode_buffer = re.sub(r"(G92 E0)",r"\1 ;Reset the extruder's origin/length", gcode_buffer)
+                    if gcode[:len(self._setting_keyword)] == self._setting_keyword:
+                        has_settings = True
+                    if ";FLAVOR:" not in gcode:
+                        model_line_count += len(gcode.splitlines()) + 1
+                        gcode_buffer += gcode + "\n"
+                    else:
+                        # Split header lines and write to buffer
+                        header_buffer = gcode.splitlines(keepends=True)
+
+            if not is_gcode_file:
+                if not has_settings:
+                    settings = self._serialiseSettings(Application.getInstance().getGlobalContainerStack())
+                    model_line_count += len(settings.splitlines())
+                # Combine everything
+                stream.write(";Header Start\n\n")
+                stream.write(header_buffer[0]) # FLAVOR
+                stream.write(header_buffer[1]) # TIME
+                stream.write(header_buffer[2]) # Filament used
+                stream.write(header_buffer[3]) # Layer height
+                stream.write("\n;header_type: 3dp\n")
+                if base64_bytes:
+                    stream.write(";thumbnail: data:image/png;base64,")
+                    stream.write(base64_bytes.decode("ascii"))
+                    stream.write("\n")
+                stream.write(";file_total_lines: %s\n" % model_line_count)
+                stream.write(";estimated_time(s): %s\n" % estiTime)
+                stream.write(";nozzle_temperature(°C): %s\n" % printTemp)
+                stream.write(";build_plate_temperature(°C): %s\n" % bedTemp)
+                stream.write(header_buffer[7].replace("MAXX:","max_x(mm): ")) # max_x
+                stream.write(header_buffer[8].replace("MAXY:","max_y(mm): ")) # max_y
+                stream.write(header_buffer[9].replace("MAXZ:","max_z(mm): ")) # max_z
+                stream.write(header_buffer[4].replace("MINX:","min_x(mm): ")) # min_x
+                stream.write(header_buffer[5].replace("MINY:","min_y(mm): ")) # min_y
+                stream.write(header_buffer[6].replace("MINZ:","min_z(mm): ")) # min_z
+                stream.write("\n;Header End\n\n")
+
             stream.write(gcode_buffer)
+
             # Serialise the current container stack and put it at the end of the file.
-            if not has_settings:
-                settings = self._serialiseSettings(Application.getInstance().getGlobalContainerStack())
+            if not has_settings and not is_gcode_file:
                 stream.write(settings)
+
             return True
 
         self.setInformation(catalog.i18nc("@warning:status", "Please prepare G-code before exporting."))

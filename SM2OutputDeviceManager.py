@@ -186,6 +186,11 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
             Message(title="Error", text=str(e), dismissable=True).show()
             return self._auth_token
 
+    def disconnect(self):
+        requests.post("http://" + self._address + self._api_prefix + "/disconnect",
+                        data={"token": self._auth_token})
+        Logger.log("d", "/disconnect")
+
     def check_status(self):
         try:
             conn = requests.get("http://" + self._address + self._api_prefix + "/status", params={"token": self._auth_token})
@@ -243,6 +248,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
 
     def _onUploadCompleted(self, reply):
         self._progress.hide()
+        self.disconnect()
         if not reply.error():
             Message(
                 title="Sent to {}".format(self._id),
