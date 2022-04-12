@@ -248,7 +248,10 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
 
     def _onUploadCompleted(self, reply):
         self._progress.hide()
-        self.disconnect()
+
+        if self.connectionState == ConnectionState.Connected:
+            self.disconnect()
+
         if not reply.error():
             Message(
                 title="Sent to {}".format(self._id),
