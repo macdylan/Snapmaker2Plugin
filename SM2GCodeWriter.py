@@ -16,8 +16,16 @@ from cura.Snapshot import Snapshot
 from cura.CuraApplication import CuraApplication
 from cura.Utils.Threading import call_on_qt_thread
 # from cura.UI import PrintInformation
-from PyQt5.QtCore import QBuffer
-from PyQt5.QtGui import QImage
+try:
+    from PyQt6.QtCore import QBuffer
+    from PyQt6.QtGui import QImage
+    QImageFormat = QImage.Format.Format_Indexed8
+    QBufferOpenMode = QBuffer.OpenModeFlag.ReadWrite
+except ImportError:
+    from PyQt5.QtCore import QBuffer
+    from PyQt5.QtGui import QImage
+    QImageFormat = QImage.Format_Indexed8
+    QBufferOpenMode = QBuffer.ReadWrite
 
 from UM.i18n import i18nCatalog
 catalog = i18nCatalog("cura")
@@ -70,7 +78,7 @@ class SM2GCodeWriter(MeshWriter):
             Logger.log("w", "Can't create snapshot when renderer not initialized.")
             return None
         try:
-            ss = Snapshot.snapshot(width=300, height=300).convertToFormat(QImage.Format_Indexed8)
+            ss = Snapshot.snapshot(width=300, height=300).convertToFormat(QImageFormat)
         except Exception:
             Logger.logException("w", "Failed to create snapshot image")
             return None
@@ -127,7 +135,7 @@ class SM2GCodeWriter(MeshWriter):
         ss = self._createSnapshot()
         if ss:
             thumbnail_buffer = QBuffer()
-            thumbnail_buffer.open(QBuffer.ReadWrite)
+            thumbnail_buffer.open(QBufferOpenMode)
             ss.save(thumbnail_buffer, "PNG")
             base64_bytes = base64.b64encode(thumbnail_buffer.data())
             thumbnail_buffer.close()

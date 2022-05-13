@@ -2,7 +2,15 @@ import threading
 import socket
 import requests
 from io import StringIO
-from PyQt5.QtCore import QTimer
+try:
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtNetwork import QNetworkReply
+    QNetworkReplyNetworkErrors = QNetworkReply.NetworkError
+except ImportError:
+    from PyQt5.QtCore import QTimer
+    from PyQt5.QtNetwork import QNetworkReply
+    QNetworkReplyNetworkErrors = QNetworkReply.NetworkError
+
 
 from cura.CuraApplication import CuraApplication
 from cura.PrinterOutput.NetworkedPrinterOutputDevice import NetworkedPrinterOutputDevice, AuthState
@@ -43,6 +51,7 @@ class SM2OutputDeviceManager(OutputDevicePlugin):
 
     def stop(self):
         self._check_update = False
+        self._update_thread.join()
 
     def _updateThread(self):
         while self._check_update:
@@ -189,6 +198,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
     def disconnect(self):
         requests.post("http://" + self._address + self._api_prefix + "/disconnect",
                         data={"token": self._auth_token})
+        self.setConnectionState(ConnectionState.Closed)
         Logger.log("d", "/disconnect")
 
     def check_status(self):
@@ -252,7 +262,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
         if self.connectionState == ConnectionState.Connected:
             self.disconnect()
 
-        if not reply.error():
+        if reply.error() == QNetworkReplyNetworkErrors.NoError:
             Message(
                 title="Sent to {}".format(self._id),
                 text="Start print on the touchscreen.",
@@ -324,7 +334,7 @@ class PrintJobNeedAuthMessage(Message):
         # self.addAction("", "Continue", "", "")
         # self.actionTriggered.connect(self._onCheck)
         self._gTimer = QTimer()
-        self._gTimer.setInterval(1.5 * 1000)
+        self._gTimer.setInterval(1500)
         self._gTimer.timeout.connect(lambda: self._onCheck(None, None))
         self.inactivityTimerStart.connect(self._startTimer)
         self.inactivityTimerStop.connect(self._stopTimer)
