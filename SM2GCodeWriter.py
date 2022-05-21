@@ -1,30 +1,24 @@
-#Based of https://github.com/Razor10021990/SnapmakerGcodeWriter
-
-import re  # For escaping characters in the settings.
-import json
-import copy
 import base64
+from io import StringIO
+from typing import cast
 
 from UM.Mesh.MeshWriter import MeshWriter
 from UM.Logger import Logger
-from UM.Application import Application
-from UM.Settings.InstanceContainer import InstanceContainer
-from cura.Machines.ContainerTree import ContainerTree
+from UM.PluginRegistry import PluginRegistry
 
-# from cura.CuraApplication import CuraApplication
 from cura.Snapshot import Snapshot
 from cura.CuraApplication import CuraApplication
+from cura.Settings.ExtruderManager import ExtruderManager
 from cura.Utils.Threading import call_on_qt_thread
-# from cura.UI import PrintInformation
 try:
     from PyQt6.QtCore import QBuffer
     from PyQt6.QtGui import QImage
-    QImageFormat = QImage.Format.Format_Indexed8
+    # QImageFormat = QImage.Format.Format_Indexed8
     QBufferOpenMode = QBuffer.OpenModeFlag.ReadWrite
 except ImportError:
     from PyQt5.QtCore import QBuffer
     from PyQt5.QtGui import QImage
-    QImageFormat = QImage.Format_Indexed8
+    # QImageFormat = QImage.Format_Indexed8
     QBufferOpenMode = QBuffer.ReadWrite
 
 from UM.i18n import i18nCatalog
@@ -32,290 +26,131 @@ catalog = i18nCatalog("cura")
 
 
 class SM2GCodeWriter(MeshWriter):
-    """Writes g-code to a file.
-
-    While this poses as a mesh writer, what this really does is take the g-code
-    in the entire scene and write it to an output device. Since the g-code of a
-    single mesh isn't separable from the rest what with rafts and travel moves
-    and all, it doesn't make sense to write just a single mesh.
-
-    So this plug-in takes the g-code that is stored in the root of the scene
-    node tree, adds a bit of extra information about the profiles and writes
-    that to the output device.
-    """
-
-    version = 1
-    """The file format version of the serialised g-code.
-
-    It can only read settings with the same version as the version it was
-    written with. If the file format is changed in a way that breaks reverse
-    compatibility, increment this version number!
-    """
-
-    escape_characters = {
-        re.escape("\\"): "\\\\",  # The escape character.
-        re.escape("\n"): "\\n",   # Newlines. They break off the comment.
-        re.escape("\r"): "\\r"    # Carriage return. Windows users may need this for visualisation in their editors.
-    }
-    """Dictionary that defines how characters are escaped when embedded in
-
-    g-code.
-
-    Note that the keys of this dictionary are regex strings. The values are
-    not.
-    """
-
-    _setting_keyword = ";SETTING_"
-
-    def __init__(self):
-        super().__init__(add_to_recent_files = False)
-        self._application = Application.getInstance()
+    PROCESSED_IDENTITY = ";Processed by Snapmaker2Plugin (https://github.com/macdylan/Snapmaker2Plugin)"
 
     @call_on_qt_thread
-    def _createSnapshot(self, *args):
-        Logger.log("d", "Creating thumbnail image...")
-        if not CuraApplication.getInstance().isVisible:
-            Logger.log("w", "Can't create snapshot when renderer not initialized.")
-            return None
-        try:
-            ss = Snapshot.snapshot(width=300, height=300).convertToFormat(QImageFormat)
-        except Exception:
-            Logger.logException("w", "Failed to create snapshot image")
-            return None
-        return ss
-
-    def write(self, stream, nodes, mode = MeshWriter.OutputMode.TextMode):
-        """Writes the g-code for the entire scene to a stream.
-
-        Note that even though the function accepts a collection of nodes, the
-        entire scene is always written to the file since it is not possible to
-        separate the g-code for just specific nodes.
-
-        :param stream: The stream to write the g-code to.
-        :param nodes: This is ignored.
-        :param mode: Additional information on how to format the g-code in the
-            file. This must always be text mode.
-        """
-
+    def write(self, stream, nodes, mode=MeshWriter.OutputMode.TextMode) -> bool:
         if mode != MeshWriter.OutputMode.TextMode:
             Logger.log("e", "SM2GCodeWriter does not support non-text mode.")
             self.setInformation(catalog.i18nc("@error:not supported", "SM2GCodeWriter does not support non-text mode."))
             return False
 
-        active_build_plate = Application.getInstance().getMultiBuildPlateModel().activeBuildPlate
-        scene = Application.getInstance().getController().getScene()
-        if not hasattr(scene, "gcode_dict"):
-            self.setInformation(catalog.i18nc("@warning:status", "Please prepare G-code before exporting."))
+        gcode = StringIO()
+        writer = cast(MeshWriter, PluginRegistry.getInstance().getPluginObject("GCodeWriter"))
+        success = writer.write(gcode, None)
+
+        if not success:
+            self.setInformation(writer.getInformation())
             return False
-        gcode_dict = getattr(scene, "gcode_dict")
-        gcode_list = gcode_dict.get(active_build_plate, None)
 
-        printTemp = None
-        bedTemp = None
-        for x in gcode_list:
-            if ("M190" in x or "M140" in x ) and bedTemp is None:
-                for y in re.findall(r"(M190|M140) S(\d+)", x):
-                    bedTemp = y[1]
-                    break;
-            if ("M109" in x or "M104" in x ) and printTemp is None:
-                for y in re.findall(r"(M109|M104) S(\d+)", x):
-                    printTemp = y[1]
-                    break;
-            if not (printTemp is None or bedTemp is None):
-                break;
+        gcode.seek(0)
+        result = self.mod(gcode)
+        stream.write(result.getvalue())
+        Logger.log("i", "SM2GCodeWriter done")
+        return True
 
-        print_info =  Application.getInstance().getPrintInformation()
-        feature_times = print_info.getFeaturePrintTimes()
-        estiTime = 0 #in Seconds
-        for x in feature_times:
-            estiTime += int(feature_times[x])
+    def mod(self, data: StringIO) -> StringIO:
+        i = 0
+        for x in data:
+            if i > 100:
+                break
+            if x.find(self.PROCESSED_IDENTITY) != -1:
+                return data
+            i += 1
 
-        # Generate snapshot
-        base64_bytes = b""
+        data.seek(0)
+        gcodes = data.readlines()
+
+        p = StringIO()
+        p.write(self.PROCESSED_IDENTITY + "\n")
+        p.write(";Header Start\n")
+        p.write(gcodes[0])  # FLAVOR
+        p.write(gcodes[1])  # TIME
+        p.write(gcodes[2])  # Filament used
+        p.write(gcodes[3])  # Layer height
+        p.write(";header_type: 3dp\n")
+
         ss = self._createSnapshot()
         if ss:
+            p.write(";thumbnail: data:image/png;base64,")
+            p.write(self._encodeSnapshot(ss))
+            p.write("\n")
+
+        app = CuraApplication.getInstance()
+        print_time = int(app.getPrintInformation().currentPrintTime)
+        print_temp = self._getValue("material_print_temperature")
+        bed_temp = self._getValue("material_bed_temperature")
+
+        p.write(";file_total_lines: %d\n" % len(gcodes))
+        p.write(";estimated_time(s): %d\n" % print_time)
+        p.write(";nozzle_temperature(°C): %s\n" % print_temp)
+        p.write(";build_plate_temperature(°C): %s\n" % bed_temp)
+        p.write(gcodes[7].replace("MAXX:", "max_x(mm): "))  # max_x
+        p.write(gcodes[8].replace("MAXY:", "max_y(mm): "))  # max_y
+        p.write(gcodes[9].replace("MAXZ:", "max_z(mm): "))  # max_z
+        p.write(gcodes[4].replace("MINX:", "min_x(mm): "))  # min_x
+        p.write(gcodes[5].replace("MINY:", "min_y(mm): "))  # min_y
+        p.write(gcodes[6].replace("MINZ:", "min_z(mm): "))  # min_z
+        p.write(";Header End\n")
+
+        p.write("".join(gcodes[10:]))
+        return p
+
+    def _createSnapshot(self):
+        Logger.log("d", "Creating thumbnail image...")
+        try:
+            return Snapshot.snapshot(width=150, height=150)  # .convertToFormat(QImageFormat)
+        except Exception:
+            Logger.logException("w", "Failed to create snapshot image")
+            return None
+
+    def _encodeSnapshot(self, snapshot) -> str:
+        Logger.log("d", "Encoding thumbnail image...")
+        try:
             thumbnail_buffer = QBuffer()
             thumbnail_buffer.open(QBufferOpenMode)
-            ss.save(thumbnail_buffer, "PNG")
+            thumbnail_image = snapshot
+            thumbnail_image.save(thumbnail_buffer, "PNG")
             base64_bytes = base64.b64encode(thumbnail_buffer.data())
+            base64_message = base64_bytes.decode('ascii')
             thumbnail_buffer.close()
+            return base64_message
+        except Exception:
+            Logger.logException("w", "Failed to encode snapshot image")
 
-        # Start header
-        gcode_buffer = ""
-        header_buffer = False
-        model_line_count = 22
-        if gcode_list is not None:
-            has_settings = False
-            is_gcode_file = False
-            for line, gcode in enumerate(gcode_list):
-                if line is 0 and len(re.findall(r"\n", gcode)) is 1:
-                    is_gcode_file = True
+    def _getValue(self, key) -> str:
+        app = CuraApplication.getInstance()
+        stack1 = ExtruderManager.getInstance().getActiveExtruderStack()
+        stack2 = app.getGlobalContainerStack()
+        stack3 = app.getMachineManager()
 
-                if is_gcode_file:
-                    gcode_buffer += gcode
+        stack = None
+        if stack1.hasProperty(key, "value"):
+            stack = stack1
+        elif stack2.hasProperty(key, "value"):
+            stack = stack2
+        elif stack3.hasProperty(key, "value"):
+            stack = stack3
 
-                else:
-                    if gcode[:len(self._setting_keyword)] == self._setting_keyword:
-                        has_settings = True
-                    if ";FLAVOR:" not in gcode:
-                        model_line_count += len(gcode.splitlines()) + 1
-                        gcode_buffer += gcode + "\n"
-                    else:
-                        # Split header lines and write to buffer
-                        header_buffer = gcode.splitlines(keepends=True)
-
-            if not is_gcode_file:
-                if not has_settings:
-                    settings = self._serialiseSettings(Application.getInstance().getGlobalContainerStack())
-                    model_line_count += len(settings.splitlines())
-                # Combine everything
-                stream.write(";Header Start\n\n")
-                stream.write(header_buffer[0]) # FLAVOR
-                stream.write(header_buffer[1]) # TIME
-                stream.write(header_buffer[2]) # Filament used
-                stream.write(header_buffer[3]) # Layer height
-                stream.write("\n;header_type: 3dp\n")
-                if base64_bytes:
-                    stream.write(";thumbnail: data:image/png;base64,")
-                    stream.write(base64_bytes.decode("ascii"))
-                    stream.write("\n")
-                stream.write(";file_total_lines: %s\n" % model_line_count)
-                stream.write(";estimated_time(s): %s\n" % estiTime)
-                stream.write(";nozzle_temperature(°C): %s\n" % printTemp)
-                stream.write(";build_plate_temperature(°C): %s\n" % bedTemp)
-                stream.write(header_buffer[7].replace("MAXX:","max_x(mm): ")) # max_x
-                stream.write(header_buffer[8].replace("MAXY:","max_y(mm): ")) # max_y
-                stream.write(header_buffer[9].replace("MAXZ:","max_z(mm): ")) # max_z
-                stream.write(header_buffer[4].replace("MINX:","min_x(mm): ")) # min_x
-                stream.write(header_buffer[5].replace("MINY:","min_y(mm): ")) # min_y
-                stream.write(header_buffer[6].replace("MINZ:","min_z(mm): ")) # min_z
-                stream.write("\n;Header End\n\n")
-
-            stream.write(gcode_buffer)
-
-            # Serialise the current container stack and put it at the end of the file.
-            if not has_settings and not is_gcode_file:
-                stream.write(settings)
-
-            return True
-
-        self.setInformation(catalog.i18nc("@warning:status", "Please prepare G-code before exporting."))
-        return False
-
-    def _createFlattenedContainerInstance(self, instance_container1, instance_container2):
-        """Create a new container with container 2 as base and container 1 written over it."""
-
-        flat_container = InstanceContainer(instance_container2.getName())
-
-        # The metadata includes id, name and definition
-        flat_container.setMetaData(copy.deepcopy(instance_container2.getMetaData()))
-
-        if instance_container1.getDefinition():
-            flat_container.setDefinition(instance_container1.getDefinition().getId())
-
-        for key in instance_container2.getAllKeys():
-            flat_container.setProperty(key, "value", instance_container2.getProperty(key, "value"))
-
-        for key in instance_container1.getAllKeys():
-            flat_container.setProperty(key, "value", instance_container1.getProperty(key, "value"))
-
-        return flat_container
-
-    def _serialiseSettings(self, stack):
-        """Serialises a container stack to prepare it for writing at the end of the g-code.
-
-        The settings are serialised, and special characters (including newline)
-        are escaped.
-
-        :param stack: A container stack to serialise.
-        :return: A serialised string of the settings.
-        """
-        container_registry = self._application.getContainerRegistry()
-
-        prefix = self._setting_keyword + str(SM2GCodeWriter.version) + " "  # The prefix to put before each line.
-        prefix_length = len(prefix)
-
-        quality_type = stack.quality.getMetaDataEntry("quality_type")
-        container_with_profile = stack.qualityChanges
-        machine_definition_id_for_quality = ContainerTree.getInstance().machines[stack.definition.getId()].quality_definition
-        if container_with_profile.getId() == "empty_quality_changes":
-            # If the global quality changes is empty, create a new one
-            quality_name = container_registry.uniqueName(stack.quality.getName())
-            quality_id = container_registry.uniqueName((stack.definition.getId() + "_" + quality_name).lower().replace(" ", "_"))
-            container_with_profile = InstanceContainer(quality_id)
-            container_with_profile.setName(quality_name)
-            container_with_profile.setMetaDataEntry("type", "quality_changes")
-            container_with_profile.setMetaDataEntry("quality_type", quality_type)
-            if stack.getMetaDataEntry("position") is not None:  # For extruder stacks, the quality changes should include an intent category.
-                container_with_profile.setMetaDataEntry("intent_category", stack.intent.getMetaDataEntry("intent_category", "default"))
-            container_with_profile.setDefinition(machine_definition_id_for_quality)
-
-        flat_global_container = self._createFlattenedContainerInstance(stack.userChanges, container_with_profile)
-        # If the quality changes is not set, we need to set type manually
-        if flat_global_container.getMetaDataEntry("type", None) is None:
-            flat_global_container.setMetaDataEntry("type", "quality_changes")
-
-        # Ensure that quality_type is set. (Can happen if we have empty quality changes).
-        if flat_global_container.getMetaDataEntry("quality_type", None) is None:
-            flat_global_container.setMetaDataEntry("quality_type", stack.quality.getMetaDataEntry("quality_type", "normal"))
-
-        # Get the machine definition ID for quality profiles
-        flat_global_container.setMetaDataEntry("definition", machine_definition_id_for_quality)
-
-        serialized = flat_global_container.serialize()
-        data = {"global_quality": serialized}
-
-        all_setting_keys = flat_global_container.getAllKeys()
-        for extruder in stack.extruderList:
-            extruder_quality = extruder.qualityChanges
-            if extruder_quality.getId() == "empty_quality_changes":
-                # Same story, if quality changes is empty, create a new one
-                quality_name = container_registry.uniqueName(stack.quality.getName())
-                quality_id = container_registry.uniqueName((stack.definition.getId() + "_" + quality_name).lower().replace(" ", "_"))
-                extruder_quality = InstanceContainer(quality_id)
-                extruder_quality.setName(quality_name)
-                extruder_quality.setMetaDataEntry("type", "quality_changes")
-                extruder_quality.setMetaDataEntry("quality_type", quality_type)
-                extruder_quality.setDefinition(machine_definition_id_for_quality)
-
-            flat_extruder_quality = self._createFlattenedContainerInstance(extruder.userChanges, extruder_quality)
-            # If the quality changes is not set, we need to set type manually
-            if flat_extruder_quality.getMetaDataEntry("type", None) is None:
-                flat_extruder_quality.setMetaDataEntry("type", "quality_changes")
-
-            # Ensure that extruder is set. (Can happen if we have empty quality changes).
-            if flat_extruder_quality.getMetaDataEntry("position", None) is None:
-                flat_extruder_quality.setMetaDataEntry("position", extruder.getMetaDataEntry("position"))
-
-            # Ensure that quality_type is set. (Can happen if we have empty quality changes).
-            if flat_extruder_quality.getMetaDataEntry("quality_type", None) is None:
-                flat_extruder_quality.setMetaDataEntry("quality_type", extruder.quality.getMetaDataEntry("quality_type", "normal"))
-
-            # Change the default definition
-            flat_extruder_quality.setMetaDataEntry("definition", machine_definition_id_for_quality)
-
-            extruder_serialized = flat_extruder_quality.serialize()
-            data.setdefault("extruder_quality", []).append(extruder_serialized)
-
-            all_setting_keys.update(flat_extruder_quality.getAllKeys())
-
-        # Check if there is any profiles
-        if not all_setting_keys:
-            Logger.log("i", "No custom settings found, not writing settings to g-code.")
+        if not stack:
             return ""
 
-        json_string = json.dumps(data)
+        GetType = stack.getProperty(key, "type")
+        GetVal = stack.getProperty(key, "value")
 
-        # Escape characters that have a special meaning in g-code comments.
-        pattern = re.compile("|".join(SM2GCodeWriter.escape_characters.keys()))
+        if str(GetType) == "float":
+            GelValStr = "{:.4f}".format(GetVal).rstrip("0").rstrip(".")
+        else:
+            # enum = Option list
+            if str(GetType) == "enum":
+                # definition_option = key + " option " + str(GetVal)
+                get_option = str(GetVal)
+                GetOption = stack.getProperty(key, "options")
+                GetOptionDetail = GetOption[get_option]
+                # GelValStr=i18n_catalog.i18nc(definition_option, GetOptionDetail)
+                GelValStr = GetOptionDetail
+                # Logger.log("d", "GetType_doTree = %s ; %s ; %s ; %s",definition_option, GelValStr, GetOption, GetOptionDetail)
+            else:
+                GelValStr = str(GetVal)
 
-        # Perform the replacement with a regular expression.
-        escaped_string = pattern.sub(lambda m: SM2GCodeWriter.escape_characters[re.escape(m.group(0))], json_string)
-
-        # Introduce line breaks so that each comment is no longer than 80 characters. Prepend each line with the prefix.
-        result = ""
-
-        # Lines have 80 characters, so the payload of each line is 80 - prefix.
-        for pos in range(0, len(escaped_string), 80 - prefix_length):
-            result += prefix + escaped_string[pos: pos + 80 - prefix_length] + "\n"
-        return result
+        return GelValStr

@@ -34,10 +34,9 @@ Install profile from [snapmaker official cura profiles page](https://support.sna
 
 - Tap Yes in Snapmaker 2 touchscreen WiFi Connection Request (only required the first time after boot)
 
-  ![](_snapshots/touchscreen_auth.png)
-  
+  ![](_snapshots/touchscreen_auth.jpg)
+
 - Wait for file upload process to complete
-- Tap disconnect on the touchscreen or wait for touchscreen to return to home
 - Tap start buton on touchscreen
 - Navigate to files and choose the file that was just uploaded to your snapmaker
 
@@ -53,7 +52,7 @@ You can also use Save to file in Snapmaker G-code file format to disk if require
 
 # Troubleshooting Snapmaker Discovery
 ⚠️ If your snapmaker name or IP address does not appear try the following steps:
-   1. Ensure you snapmaker is connected to wifi by checking your wireless router or checking on the Snapmakers touchscreen 
+   1. Ensure you snapmaker is connected to wifi by checking your wireless router or checking on the Snapmakers touchscreen
    2. Wait 5-10 seconds, Cura continuously looks for all compatible devices in the LAN and displays them automatically
    3. Restart Snapmaker 2 (poweroff for **at least 15 seconds**) and wait for touchscreen to fully start and ensure it is connected to the right wireless lan
    4. Check your computer's firewall to see if Cura access to the local area network is blocked (win10 is blocked by default)
@@ -64,5 +63,4 @@ Please note that the instructions above are valid on firmware 1.12.1 and 1.12.3;
 
 
 ---
-**__Make Something Wonderful_**
-
+**__Make Something Wonderful__**
