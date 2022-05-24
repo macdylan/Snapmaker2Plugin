@@ -88,17 +88,17 @@ class SM2GCodeWriter(MeshWriter):
         app = CuraApplication.getInstance()
         print_time = int(app.getPrintInformation().currentPrintTime) * 1.07  # Times empirical parameter: 1.07
         print_speed = float(self._getValue("speed_infill"))
-        print_temp = self._getValue("material_print_temperature")
-        bed_temp = self._getValue("material_bed_temperature") or "0"
+        print_temp = float(self._getValue("material_print_temperature"))
+        bed_temp = float(self._getValue("material_bed_temperature")) or 0.0
 
         if not print_speed or not print_temp:
             raise ModError("Unable to slice with the current settings: speed_infill or material_print_temperature")
 
         p.write(";file_total_lines: %d\n" % len(gcodes))
-        p.write(";estimated_time(s): %d\n" % print_time)
-        p.write(";nozzle_temperature(°C): %s\n" % print_temp)
-        p.write(";build_plate_temperature(°C): %s\n" % bed_temp)
-        p.write(";work_speed(mm/minute): %d\n" % (print_speed * 60))
+        p.write(";estimated_time(s): %.0f\n" % print_time)
+        p.write(";nozzle_temperature(°C): %.0f\n" % print_temp)
+        p.write(";build_plate_temperature(°C): %.0f\n" % bed_temp)
+        p.write(";work_speed(mm/minute): %.0f\n" % (print_speed * 60.0))
         p.write(gcodes[7].replace("MAXX:", "max_x(mm): "))  # max_x
         p.write(gcodes[8].replace("MAXY:", "max_y(mm): "))  # max_y
         p.write(gcodes[9].replace("MAXZ:", "max_z(mm): "))  # max_z
