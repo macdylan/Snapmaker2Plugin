@@ -133,16 +133,16 @@ class SM2GCodeWriter(MeshWriter):
             Logger.logException("w", "Failed to encode snapshot image")
 
     def _getValue(self, key) -> str:
-        app = CuraApplication.getInstance()
-        stack1 = ExtruderManager.getInstance().getActiveExtruderStack()
-        stack2 = app.getGlobalContainerStack()
+        # app = CuraApplication.getInstance()
+        stack = ExtruderManager.getInstance().getActiveExtruderStack()
+        # stack2 = app.getGlobalContainerStack()
         # stack3 = app.getMachineManager()
 
-        stack = None
-        if stack1.hasProperty(key, "value"):
-            stack = stack1
-        elif stack2.hasProperty(key, "value"):
-            stack = stack2
+        # stack = None
+        # if stack1.hasProperty(key, "value"):
+        #     stack = stack1
+        # elif stack2.hasProperty(key, "value"):
+        #     stack = stack2
         # elif stack3.hasProperty(key, "value"):
         #     stack = stack3
 
