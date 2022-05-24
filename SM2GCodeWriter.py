@@ -25,6 +25,10 @@ from UM.i18n import i18nCatalog
 catalog = i18nCatalog("cura")
 
 
+class ModError(Exception):
+    pass
+
+
 class SM2GCodeWriter(MeshWriter):
     PROCESSED_IDENTITY = ";Processed by Snapmaker2Plugin (https://github.com/macdylan/Snapmaker2Plugin)"
 
@@ -44,10 +48,15 @@ class SM2GCodeWriter(MeshWriter):
             return False
 
         gcode.seek(0)
-        result = self.mod(gcode)
-        stream.write(result.getvalue())
-        Logger.log("i", "SM2GCodeWriter done")
-        return True
+        try:
+            result = self.mod(gcode)
+            stream.write(result.getvalue())
+            Logger.log("i", "SM2GCodeWriter done")
+            return True
+        except ModError as e:
+            self.setInformation(str(e))
+            Logger.log("e", e)
+            return False
 
     def mod(self, data: StringIO) -> StringIO:
         i = 0
@@ -77,14 +86,19 @@ class SM2GCodeWriter(MeshWriter):
             p.write("\n")
 
         app = CuraApplication.getInstance()
-        print_time = int(app.getPrintInformation().currentPrintTime)
+        print_time = int(app.getPrintInformation().currentPrintTime) * 1.07  # Times empirical parameter: 1.07
+        print_speed = float(self._getValue("speed_infill"))
         print_temp = self._getValue("material_print_temperature")
-        bed_temp = self._getValue("material_bed_temperature")
+        bed_temp = self._getValue("material_bed_temperature") or "0"
+
+        if not print_speed or not print_temp:
+            raise ModError("Unable to slice with the current settings: speed_infill or material_print_temperature")
 
         p.write(";file_total_lines: %d\n" % len(gcodes))
         p.write(";estimated_time(s): %d\n" % print_time)
         p.write(";nozzle_temperature(°C): %s\n" % print_temp)
         p.write(";build_plate_temperature(°C): %s\n" % bed_temp)
+        p.write(";work_speed(mm/minute): %d\n" % (print_speed * 60))
         p.write(gcodes[7].replace("MAXX:", "max_x(mm): "))  # max_x
         p.write(gcodes[8].replace("MAXY:", "max_y(mm): "))  # max_y
         p.write(gcodes[9].replace("MAXZ:", "max_z(mm): "))  # max_z
@@ -96,7 +110,7 @@ class SM2GCodeWriter(MeshWriter):
         p.write("".join(gcodes[10:]))
         return p
 
-    def _createSnapshot(self):
+    def _createSnapshot(self) -> QImage:
         Logger.log("d", "Creating thumbnail image...")
         try:
             return Snapshot.snapshot(width=150, height=150)  # .convertToFormat(QImageFormat)
@@ -104,7 +118,7 @@ class SM2GCodeWriter(MeshWriter):
             Logger.logException("w", "Failed to create snapshot image")
             return None
 
-    def _encodeSnapshot(self, snapshot) -> str:
+    def _encodeSnapshot(self, snapshot: QImage) -> str:
         Logger.log("d", "Encoding thumbnail image...")
         try:
             thumbnail_buffer = QBuffer()
@@ -122,15 +136,15 @@ class SM2GCodeWriter(MeshWriter):
         app = CuraApplication.getInstance()
         stack1 = ExtruderManager.getInstance().getActiveExtruderStack()
         stack2 = app.getGlobalContainerStack()
-        stack3 = app.getMachineManager()
+        # stack3 = app.getMachineManager()
 
         stack = None
         if stack1.hasProperty(key, "value"):
             stack = stack1
         elif stack2.hasProperty(key, "value"):
             stack = stack2
-        elif stack3.hasProperty(key, "value"):
-            stack = stack3
+        # elif stack3.hasProperty(key, "value"):
+        #     stack = stack3
 
         if not stack:
             return ""
