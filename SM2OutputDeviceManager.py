@@ -1,21 +1,40 @@
-import threading
-import socket
-import requests
 import time
 import json
 from io import StringIO
+from typing import List
 try:
     from PyQt6.QtCore import QTimer
-    from PyQt6.QtNetwork import QNetworkReply
+    from PyQt6.QtNetwork import (
+        QUdpSocket,
+        QHostAddress,
+        QHttpPart,
+        QNetworkRequest,
+        QNetworkAccessManager,
+        QNetworkReply)
+    QNetworkAccessManagerOperations = QNetworkAccessManager.Operation
+    QNetworkRequestAttributes = QNetworkRequest.Attribute
     QNetworkReplyNetworkErrors = QNetworkReply.NetworkError
+    QHostAddressAny = QHostAddress.SpecialAddress.AnyIPv4
+    QHostAddressBroadcast = QHostAddress.SpecialAddress.Broadcast
 except ImportError:
     from PyQt5.QtCore import QTimer
-    from PyQt5.QtNetwork import QNetworkReply
-    QNetworkReplyNetworkErrors = QNetworkReply.NetworkError
+    from PyQt5.QtNetwork import (
+        QUdpSocket,
+        QHostAddress,
+        QHttpPart,
+        QNetworkRequest,
+        QNetworkAccessManager,
+        QNetworkReply
+    )
+    QNetworkAccessManagerOperations = QNetworkAccessManager
+    QNetworkRequestAttributes = QNetworkRequest
+    QNetworkReplyNetworkErrors = QNetworkReply
+    QHostAddressAny = QHostAddress.SpecialAddress.AnyIPv4
+    QHostAddressBroadcast = QHostAddress.SpecialAddress.Broadcast
 
 from cura.CuraApplication import CuraApplication
 from cura.PrinterOutput.NetworkedPrinterOutputDevice import NetworkedPrinterOutputDevice, AuthState
-from cura.PrinterOutput.PrinterOutputDevice import ConnectionState, ConnectionType
+from cura.PrinterOutput.PrinterOutputDevice import ConnectionState
 
 from UM.Signal import Signal
 from UM.Logger import Logger
@@ -41,9 +60,15 @@ class SM2OutputDeviceManager(OutputDevicePlugin):
 
     def __init__(self):
         super().__init__()
-        self._discovering = threading.Event()
-        self._discover_thread = None
-        self._discovered_devices = []  # List[ip:bytes, id:bytes]
+        self._discover_socket = QUdpSocket()
+        self._discover_socket.bind(QHostAddressAny)
+        self._discover_socket.readyRead.connect(self._udpProcessor)
+
+        self._discover_timer = QTimer()
+        self._discover_timer.setInterval(6000)
+        self._discover_timer.timeout.connect(self._onDiscovering)
+
+        self._discovered_devices = set()  # set{ip:bytes, id:bytes}
         self.discoveredDevicesChanged.connect(self.addOutputDevice)
 
         app = Application.getInstance()
@@ -59,79 +84,80 @@ class SM2OutputDeviceManager(OutputDevicePlugin):
             self._tokens = {}
         Logger.log("d", "Load tokens: {}".format(self._tokens))
 
-        app.initializationFinished.connect(self.start)
+        app.globalContainerStackChanged.connect(self.start)
         app.applicationShuttingDown.connect(self.stop)
 
     def start(self):
-        if self._discover_thread is None or not self._discover_thread.is_alive():
-            self._discover_thread = threading.Thread(target=self._discoverThread, daemon=True)
-            self._discover_thread.start()
+        if self._discover_timer and not self._discover_timer.isActive():
+            self._onDiscovering()
+            self._discover_timer.start()
+            Logger.log("i", "Snapmaker2Plugin started.")
 
     def stop(self):
-        self._discovering.set()
-        if self._discover_thread and self._discover_thread.is_alive():
-            self._discover_thread.join(timeout=1)
+        if self._discover_socket:
+            self._discover_socket.abort()
+        if self._discover_timer and self._discover_timer.isActive():
+            self._discover_timer.stop()
         self._saveTokens()
+        Logger.log("i", "Snapmaker2Plugin stopped.")
 
     def _saveTokens(self):
+        updated = False
         devices = self.getOutputDeviceManager().getOutputDevices()
         for d in devices:
             if hasattr(d, "getToken") and hasattr(d, "getModel") and d.getToken():
                 name = self._tokensKeyName(d.getName(), d.getModel())
-                self._tokens[name] = d.getToken()
-        if self._preferences and len(self._tokens.keys()):
-            self._preferences.setValue(self.PREFERENCE_KEY_TOKEN, json.dumps(self._tokens))
-            Logger.log("d", "%d tokens saved." % len(self._tokens.keys()))
+                if name not in self._tokens or self._tokens[name] != d.getToken():
+                    self._tokens[name] = d.getToken()
+                    updated = True
+        if updated and self._preferences:
+            try:
+                self._preferences.setValue(self.PREFERENCE_KEY_TOKEN, json.dumps(self._tokens))
+                Logger.log("d", "%d tokens saved." % len(self._tokens.keys()))
+            except ValueError:
+                self._tokens = {}
 
     def startDiscovery(self):
-        Logger.log("i", "Discover start")
-        if self._preferences:
-            self._preferences.resetPreference(self.PREFERENCE_KEY_TOKEN)
-        self._addRemoveDevice(self._discover(timeout=3))
-        Logger.log("i", "Discover finished, found %d devices.", len(self._discovered_devices))
+        Logger.log("i", "Discovering ...")
+        self._onDiscovering()
 
-    def _discoverThread(self):
-        while not self._discovering.is_set():
-            self._addRemoveDevice(self._discover())
-            self._saveTokens()  # TODO
-            self._discovering.wait(4.0)
+    def _udpProcessor(self):
+        devices = set()
+        while self._discover_socket.hasPendingDatagrams():
+            data = self._discover_socket.receiveDatagram()
+            if data.isValid() and not data.senderAddress().isNull():
+                ip = data.senderAddress().toString()
+                try:
+                    msg = bytes(data.data()).decode("utf-8")
+                    if "|model:" in msg and "|status:" in msg:
+                        devices.add((ip, msg))
+                    else:
+                        Logger.log("w", "Unknown device %s from %s", msg, ip)
+                except UnicodeDecodeError:
+                    pass
+        if len(devices) and self._discovered_devices != devices:
+            Logger.log("i", "Discover finished, found %d devices.", len(devices))
+            self._discovered_devices = devices
+            self.discoveredDevicesChanged.emit()
 
-    def _discover(self, msg=b"discover", port=20054, timeout=2):
-        devices = []
-        cs = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        cs.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        cs.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
-        cs.settimeout(timeout)
-
-        try:
-            cs.sendto(msg, ("<broadcast>", port))
-
-            while True:
-                resp, (ip, _) = cs.recvfrom(512)
-                if b"|model:" in resp and b"|status:" in resp:
-                    Logger.log("d", "Found device [%s] %s", ip, resp)
-                    devices.append((ip, resp))
-                else:
-                    Logger.log("w", "Unknown device %s from %s", resp, ip)
-        except (socket.timeout, OSError):
-            return devices
-
-    def _addRemoveDevice(self, devices: list):
-        self._discovered_devices = devices
-        self.discoveredDevicesChanged.emit()
+    def _onDiscovering(self, *args, **kwargs):
+        self._discover_socket.writeDatagram(b"discover", QHostAddressBroadcast, 20054)
+        self._saveTokens()  # TODO
 
     def addOutputDevice(self):
         for ip, resp in self._discovered_devices:
-            id, name, model = self._parse(resp.decode())
+            Logger.log("d", "Found device [%s] %s", ip, resp)
+            id, name, model, status = self._parse(resp)
             if not id:
                 continue
             device = self.getOutputDeviceManager().getOutputDevice(id)
             if not device:
                 device = SM2OutputDevice(ip, id, name, model)
-                key = self._tokensKeyName(name, model)
-                if key in self._tokens:
-                    device.setToken(self._tokens[key])
                 self.getOutputDeviceManager().addOutputDevice(device)
+            key = self._tokensKeyName(name, model)
+            if key in self._tokens:
+                device.setToken(self._tokens[key])
+            device.setDeviceStatus(status)
 
     def _tokensKeyName(self, name, model) -> str:
         return "{}@{}".format(name, model)
@@ -146,33 +172,32 @@ class SM2OutputDeviceManager(OutputDevicePlugin):
             id = resp[:p_model]
             name = id[:id.rfind("@")]
             model = resp[p_model + 7:p_status]
-            # status = resp[p_status + 8:]
-            return id, name, model
-        return None, None, None
+            status = resp[p_status + 8:]
+            return id, name, model, status
+        return None, None, None, None
 
 
 class SM2OutputDevice(NetworkedPrinterOutputDevice):
 
-    def __init__(self, address, device_id, name, model):
+    def __init__(self, address, device_id, name, model, **kwargs):
         super().__init__(
             device_id=device_id,
             address=address,
             properties={},
-            connection_type=ConnectionType.NetworkConnection)
+            **kwargs)
 
         self._model = model
         self._name = name
         self._api_prefix = ":8080/api/v1"
         self._auth_token = ""
+        self._filename = ""
         self._gcode_stream = StringIO()
-        self._writing = False
 
         self._setInterface()
 
-        self._authentication_state = AuthState.NotAuthenticated
         self.authenticationStateChanged.connect(self._onAuthenticationStateChanged)
-
         self.connectionStateChanged.connect(self._onConnectionStateChanged)
+        self.writeFinished.connect(self._byebye)
 
         self._progress = PrintJobUploadProgressMessage(self)
         self._need_auth = PrintJobNeedAuthMessage(self)
@@ -181,25 +206,33 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
         return self._auth_token
 
     def setToken(self, token: str):
-        Logger.log("d", "setToken: %s", token)
+        Logger.log("d", "%s setToken: %s", self.getId(), token)
         self._auth_token = token
 
     def getModel(self) -> str:
         return self._model
 
-    def _setInterface(self):
-        self.setPriority(2)
-        self.setShortDescription("Send to {}".format(self._address))  # button
-        self.setDescription("Send to {}".format(self._id))  # pop menu
-        self.setConnectionText("Connected to {}".format(self._id))
+    def setDeviceStatus(self, status: str):
+        Logger.log("d", "%s setDeviceStatus: %s, last state: %s", self.getId(), status, self.connectionState)
+        if status == "IDLE":
+            if self.connectionState != ConnectionState.Connected:
+                self.setConnectionState(ConnectionState.Connected)
+        elif status in ("RUNNING", "PAUSED", "STOPPED"):
+            if self.connectionState != ConnectionState.Busy:
+                self.setConnectionState(ConnectionState.Busy)
 
-    def _onConnectionStateChanged(self):
-        if self.connectionState == ConnectionState.Busy:
-            Message(title="Unable to upload", text="{} is busy".format(self._id)).show()
+    def _onConnectionStateChanged(self, id):
+        Logger.log("d", "onConnectionStateChanged: id: %s, state: %s", id, self.connectionState)
+        if id != self.getId():
+            return
 
-    def _setAuthState(self, state: "AuthState"):
-        self._authentication_state = state
-        self.authenticationStateChanged.emit()
+        if (
+            self.connectionState == ConnectionState.Connected and
+            self.authenticationState == AuthState.Authenticated
+        ):
+            if self._sending_gcode and not self._progress.visible:
+                self._progress.show()
+                self._upload()
 
     def _onAuthenticationStateChanged(self):
         if self.authenticationState == AuthState.Authenticated:
@@ -208,107 +241,81 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
             self._need_auth.show()
         elif self.authenticationState == AuthState.AuthenticationDenied:
             self._auth_token = ""
+            self._sending_gcode = False
             self._need_auth.hide()
 
-    def requestWrite(self, nodes, file_name=None, limit_mimetypes=False, file_handler=None, filter_by_machine=False, **kwargs) -> None:
-        if self._progress.visible or self._need_auth.visible or self._writing:
+    def _setInterface(self):
+        self.setPriority(2)
+        self.setShortDescription("Send to {}".format(self._address))  # button
+        self.setDescription("Send to {}".format(self._id))  # pop menu
+        self.setConnectionText("Connected to {}".format(self._id))
+
+    def requestWrite(self, nodes,
+                     file_name=None, limit_mimetypes=False, file_handler=None, filter_by_machine=False, **kwargs) -> None:
+        if self.connectionState == ConnectionState.Busy:
+            Message(title="Unable to upload", text="{} is busy.".format(self.getId())).show()
             return
 
-        self.writeStarted.emit(self)
-        self._writing = True
+        if self._progress.visible or self._need_auth.visible:
+            Logger.log("i", "Still working in progress.")
+            return
 
+        # reset
+        self._sending_gcode = True
+        self.setConnectionState(ConnectionState.Closed)
+        self.setAuthenticationState(AuthState.NotAuthenticated)
+
+        self.writeStarted.emit(self)
         self._gcode_stream = StringIO()
         job = WriteFileJob(SM2GCodeWriter(), self._gcode_stream, nodes, SM2GCodeWriter.OutputMode.TextMode)
         job.finished.connect(self._onWriteJobFinished)
 
-        message = Message(title="Preparing for upload", progress=-1, lifetime=0, dismissable=False, use_inactivity_timer=False)
+        message = Message(
+            title="Preparing for upload",
+            progress=-1,
+            lifetime=0,
+            dismissable=False,
+            use_inactivity_timer=False)
         message.show()
 
         job.setMessage(message)
         job.start()
 
     def _onWriteJobFinished(self, job):
-        self._writing = False
-        self._auth_token = self.connect()
-        self._startUpload()
+        self._hello()
 
-    def _queryParams(self):
-        return {
-            "token": self._auth_token,
-            "_": time.time(),
-        }
+    def _queryParams(self) -> List[QHttpPart]:
+        return [
+            self._createFormPart('name=token', self._auth_token.encode()),
+            self._createFormPart('name=_', "{}".format(time.time()).encode())
+        ]
 
-    def connect(self) -> str:
-        super().connect()
-        try:
-            conn = requests.post("http://" + self._address + self._api_prefix + "/connect", data=self._queryParams())
-            Logger.log("d", "/connect: %d from %s", conn.status_code, self._address)
-            if conn.status_code == 200:
-                return conn.json().get("token")
-            elif conn.status_code == 403 and self._auth_token:
-                # expired
-                self._auth_token = ""
-                return self.connect()
-            else:
-                Message(text="Please check the touchscreen and try again (Err: %d)." % conn.status_code, lifetime=10, dismissable=True).show()
-                return self._auth_token
+    def _hello(self) -> None:
+        # if self._auth_token:
+        #     # Closed to prevent set Connected in NetworkedPrinterOutputDevice._handleOnFinished
+        #     self.setConnectionState(ConnectionState.Closed)
+        self.postFormWithParts("/connect", self._queryParams(), self._onRequestFinished)
 
-        except requests.exceptions.ConnectionError as e:
-            Message(title="Error", text=str(e), dismissable=True).show()
-            return self._auth_token
+    def _byebye(self):
+        if self._auth_token:
+            self.postFormWithParts("/disconnect", self._queryParams(),
+                                   lambda r: self.setConnectionState(ConnectionState.Closed))
 
-    def disconnect(self):
-        requests.post("http://" + self._address + self._api_prefix + "/disconnect", data=self._queryParams())
-        self.setConnectionState(ConnectionState.Closed)
-        Logger.log("d", "/disconnect")
+    def checkStatus(self):
+        url = "/status?token={}&_={}".format(self._auth_token, time.time())
+        self.get(url, self._onRequestFinished)
 
-    def check_status(self):
-        try:
-            conn = requests.get("http://" + self._address + self._api_prefix + "/status", params=self._queryParams())
-            Logger.log("d", "/status: %d from %s", conn.status_code, self._address)
-            if conn.status_code == 200:
-
-                status = conn.json().get("status", "UNKNOWN")
-                Logger.log("d", "Printer status is %s" % status)
-                if status == "IDLE":
-                    self.setConnectionState(ConnectionState.Connected)
-                elif status in ("RUNNING", "PAUSED", "STOPPED"):
-                    self.setConnectionState(ConnectionState.Busy)
-                else:
-                    self.setConnectionState(ConnectionState.Error)
-
-                self._setAuthState(AuthState.Authenticated)
-
-            if conn.status_code == 401:
-                self._setAuthState(AuthState.AuthenticationDenied)
-
-            if conn.status_code == 204:
-                self._setAuthState(AuthState.AuthenticationRequested)
-
-        except:
-            self._setAuthState(AuthState.NotAuthenticated)
-
-    def _startUpload(self):
-        Logger.log("d", "{} token is {}".format(self._name, self._auth_token))
+    def _upload(self):
+        Logger.log("d", "Start upload to {} with token {}".format(self._name, self._auth_token))
         if not self._auth_token:
             return
-
-        self.check_status()
-
-        if self.connectionState != ConnectionState.Connected:
-            return
-
-        if self.authenticationState != AuthState.Authenticated:
-            return
-
-        self._progress.show()
 
         print_info = CuraApplication.getInstance().getPrintInformation()
         job_name = print_info.jobName.strip()
         print_time = print_info.currentPrintTime
         material_name = "-".join(print_info.materialNames)
 
-        file_name = "{}_{}_{}.gcode".format(
+        self._filename = "{}_{}_{}.gcode".format(
             job_name,
             material_name,
             "{}h{}m{}s".format(
@@ -317,30 +324,17 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
                 print_time.seconds)
         )
 
-        parts = [
-            self._createFormPart("name=token", self._auth_token.encode()),
-            self._createFormPart("name=file; filename=\"{}\"".format(file_name), self._gcode_stream.getvalue().encode())
-        ]
+        parts = self._queryParams()
+        parts.append(
+            self._createFormPart(
+                'name=file; filename="{}"'.format(self._filename),
+                self._gcode_stream.getvalue().encode()
+            )
+        )
         self._gcode_stream.close()
         self.postFormWithParts("/upload", parts,
-                               on_finished=lambda reply: self._onUploadCompleted(file_name, reply),
+                               on_finished=self._onRequestFinished,
                                on_progress=self._onUploadProgress)
-
-    def _onUploadCompleted(self, filename, reply):
-        self._progress.hide()
-
-        if self.connectionState == ConnectionState.Connected:
-            self.disconnect()
-
-        if reply.error() == QNetworkReplyNetworkErrors.NoError:
-            Message(
-                title="Sent to {}".format(self._id),
-                text="Start print on the touchscreen: {}".format(filename),
-                lifetime=0).show()
-            self.writeFinished.emit()
-        else:
-            Message(title="Error", text=reply.errorString(), lifetime=0, dismissable=True).show()
-            self.writeError.emit()
 
     def _onUploadProgress(self, bytes_sent: int, bytes_total: int):
         if bytes_total > 0:
@@ -348,15 +342,92 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
             self._progress.setProgress(perc * 100)
             self.writeProgress.emit()
 
-    def checkAndStartUpload(self):
-        self._startUpload()
+    def _onRequestFinished(self, reply: QNetworkReply) -> None:
+        http_url = reply.url().toString()
+
+        if reply.error() not in (
+            QNetworkReplyNetworkErrors.NoError,
+            QNetworkReplyNetworkErrors.AuthenticationRequiredError  # 204 is No Content, not and error
+        ):
+            Logger.log("w", "Error %d from %s", reply.error(), http_url)
+            self.setConnectionState(ConnectionState.Closed)
+            Message(
+                title="Error",
+                text=reply.errorString(),
+                lifetime=0,
+                dismissable=True
+            ).show()
+            return
+
+        http_code = reply.attribute(QNetworkRequestAttributes.HttpStatusCodeAttribute)
+        Logger.log("i", "Request: %s - %d", http_url, http_code)
+        if not http_code:
+            return
+
+        http_method = reply.operation()
+        if http_method == QNetworkAccessManagerOperations.GetOperation:
+            if self._api_prefix + "/status" in http_url:
+                if http_code == 200:
+                    self.setAuthenticationState(AuthState.Authenticated)
+                    resp = self._jsonReply(reply)
+                    device_status = resp.get("status", "UNKNOWN")
+                    self.setDeviceStatus(device_status)
+                elif http_code == 401:
+                    self.setAuthenticationState(AuthState.AuthenticationDenied)
+                elif http_code == 204:
+                    self.setAuthenticationState(AuthState.AuthenticationRequested)
+                else:
+                    self.setAuthenticationState(AuthState.NotAuthenticated)
+
+        elif http_method == QNetworkAccessManagerOperations.PostOperation:
+            if self._api_prefix + "/connect" in http_url:
+                if http_code == 200:
+                    resp = self._jsonReply(reply)
+                    token = resp.get("token")
+                    if self._auth_token != token:
+                        Logger.log("i", "New token: %s", token)
+                        self._auth_token = token
+                    self.checkStatus()  # check status and upload
+
+                elif http_code == 403 and self._auth_token:
+                    # expired
+                    self._auth_token = ""
+                    self.connect()
+                else:
+                    self.setConnectionState(ConnectionState.Closed)
+                    Message(
+                        title="Error",
+                        text="Please check the touchscreen and try again (Err: {}).".format(http_code),
+                        lifetime=10,
+                        dismissable=True
+                    ).show()
+
+            # elif self._api_prefix + "/disconnect" in http_url:
+            #     self.setConnectionState(ConnectionState.Closed)
+
+            elif self._api_prefix + "/upload" in http_url:
+                self._progress.hide()
+                self.writeFinished.emit()
+                self._sending_gcode = False
+
+                Message(
+                    title="Sent to {}".format(self.getId()),
+                    text="Start print on the touchscreen: {}".format(self._filename),
+                    lifetime=60
+                ).show()
+
+    def _jsonReply(self, reply: QNetworkReply):
+        try:
+            return json.loads(bytes(reply.readAll()).decode("utf-8"))
+        except json.decoder.JSONDecodeError:
+            Logger.log("w", "Received invalid JSON from snapmaker.")
+            return {}
 
 
 class PrintJobUploadProgressMessage(Message):
     def __init__(self, device):
         super().__init__(
             title="Sending to {}".format(device.getId()),
-            text="Uploading print job to printer:",
             progress=-1,
             lifetime=0,
             dismissable=False,
@@ -379,7 +450,7 @@ class PrintJobUploadProgressMessage(Message):
         self.setProgress(percentage)
 
     def _heartbeat(self):
-        self._device.check_status()
+        self._device.checkStatus()
 
     def _startTimer(self):
         if self._gTimer and not self._gTimer.isActive():
@@ -418,5 +489,5 @@ class PrintJobNeedAuthMessage(Message):
             self._gTimer.stop()
 
     def _onCheck(self, messageId, actionId):
-        self._device.checkAndStartUpload()
+        self._device.checkStatus()
         # self.hide()
