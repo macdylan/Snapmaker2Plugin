@@ -10,12 +10,15 @@ try:
         QHttpPart,
         QNetworkRequest,
         QNetworkAccessManager,
-        QNetworkReply)
+        QNetworkReply,
+        QNetworkInterface,
+        QAbstractSocket
+    )
     QNetworkAccessManagerOperations = QNetworkAccessManager.Operation
     QNetworkRequestAttributes = QNetworkRequest.Attribute
     QNetworkReplyNetworkErrors = QNetworkReply.NetworkError
-    QHostAddressAny = QHostAddress.SpecialAddress.AnyIPv4
     QHostAddressBroadcast = QHostAddress.SpecialAddress.Broadcast
+    QIPv4Protocol = QAbstractSocket.NetworkLayerProtocol.IPv4Protocol
 except ImportError:
     from PyQt5.QtCore import QTimer
     from PyQt5.QtNetwork import (
@@ -24,13 +27,15 @@ except ImportError:
         QHttpPart,
         QNetworkRequest,
         QNetworkAccessManager,
-        QNetworkReply
+        QNetworkReply,
+        QNetworkInterface,
+        QAbstractSocket
     )
     QNetworkAccessManagerOperations = QNetworkAccessManager
     QNetworkRequestAttributes = QNetworkRequest
     QNetworkReplyNetworkErrors = QNetworkReply
-    QHostAddressAny = QHostAddress.SpecialAddress.AnyIPv4
     QHostAddressBroadcast = QHostAddress.SpecialAddress.Broadcast
+    QIPv4Protocol = QAbstractSocket.NetworkLayerProtocol.IPv4Protocol
 
 from cura.CuraApplication import CuraApplication
 from cura.PrinterOutput.NetworkedPrinterOutputDevice import NetworkedPrinterOutputDevice, AuthState
@@ -60,9 +65,15 @@ class SM2OutputDeviceManager(OutputDevicePlugin):
 
     def __init__(self):
         super().__init__()
-        self._discover_socket = QUdpSocket()
-        self._discover_socket.bind(QHostAddressAny)
-        self._discover_socket.readyRead.connect(self._udpProcessor)
+
+        self._discover_sockets = []
+        for ipAddress in QNetworkInterface.allAddresses():
+          if not ipAddress.isLoopback() and ipAddress.protocol() == QIPv4Protocol:
+            Logger.log("i", "Discovering printers on network interface: {}".format(ipAddress.toString()))
+            socket = QUdpSocket()
+            socket.bind(ipAddress)
+            socket.readyRead.connect(lambda: self._udpProcessor(socket))
+            self._discover_sockets.append(socket)
 
         self._discover_timer = QTimer()
         self._discover_timer.setInterval(6000)
@@ -94,8 +105,8 @@ class SM2OutputDeviceManager(OutputDevicePlugin):
             Logger.log("i", "Snapmaker2Plugin started.")
 
     def stop(self):
-        if self._discover_socket:
-            self._discover_socket.abort()
+        for socket in self._discover_sockets:
+            socket.abort()
         if self._discover_timer and self._discover_timer.isActive():
             self._discover_timer.stop()
         self._saveTokens()
@@ -121,10 +132,10 @@ class SM2OutputDeviceManager(OutputDevicePlugin):
         Logger.log("i", "Discovering ...")
         self._onDiscovering()
 
-    def _udpProcessor(self):
+    def _udpProcessor(self, socket):
         devices = set()
-        while self._discover_socket.hasPendingDatagrams():
-            data = self._discover_socket.receiveDatagram()
+        while socket.hasPendingDatagrams():
+            data = socket.receiveDatagram()
             if data.isValid() and not data.senderAddress().isNull():
                 ip = data.senderAddress().toString()
                 try:
@@ -141,7 +152,8 @@ class SM2OutputDeviceManager(OutputDevicePlugin):
             self.discoveredDevicesChanged.emit()
 
     def _onDiscovering(self, *args, **kwargs):
-        self._discover_socket.writeDatagram(b"discover", QHostAddressBroadcast, 20054)
+        for socket in self._discover_sockets:
+            socket.writeDatagram(b"discover", QHostAddressBroadcast, 20054)
         self._saveTokens()  # TODO
 
     def addOutputDevice(self):
