@@ -1,3 +1,4 @@
+import ipaddress
 import time
 import json
 from io import StringIO
@@ -67,13 +68,16 @@ class SM2OutputDeviceManager(OutputDevicePlugin):
         super().__init__()
 
         self._discover_sockets = []
-        for ipAddress in QNetworkInterface.allAddresses():
-          if not ipAddress.isLoopback() and ipAddress.protocol() == QIPv4Protocol:
-            Logger.log("i", "Discovering printers on network interface: {}".format(ipAddress.toString()))
-            socket = QUdpSocket()
-            socket.bind(ipAddress)
-            socket.readyRead.connect(lambda: self._udpProcessor(socket))
-            self._discover_sockets.append(socket)
+        for interface in QNetworkInterface.allInterfaces():
+            for addr in interface.addressEntries():
+                bcastAddress = addr.broadcast()
+                ipAddress = addr.ip()
+                if not ipAddress.isLoopback() and ipAddress.protocol() == QIPv4Protocol and bcastAddress != ipAddress:
+                    Logger.log("i", "Discovering printers on network interface: {}".format(ipAddress.toString()))
+                    socket = QUdpSocket()
+                    socket.bind(ipAddress)
+                    socket.readyRead.connect(lambda: self._udpProcessor(socket))
+                    self._discover_sockets.append(socket)
 
         self._discover_timer = QTimer()
         self._discover_timer.setInterval(6000)
