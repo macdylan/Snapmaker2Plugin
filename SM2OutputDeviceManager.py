@@ -1,4 +1,3 @@
-import ipaddress
 import time
 import json
 from io import StringIO
@@ -97,7 +96,7 @@ class SM2OutputDeviceManager(OutputDevicePlugin):
             self._tokens = {}
         if not isinstance(self._tokens, dict):
             self._tokens = {}
-        Logger.log("d", "Load tokens: {}".format(self._tokens))
+        Logger.log("d", "'{}' tokens loaded.".format(len(self._tokens.keys())))
 
         app.globalContainerStackChanged.connect(self.start)
         app.applicationShuttingDown.connect(self.stop)
@@ -128,7 +127,7 @@ class SM2OutputDeviceManager(OutputDevicePlugin):
         if updated and self._preferences:
             try:
                 self._preferences.setValue(self.PREFERENCE_KEY_TOKEN, json.dumps(self._tokens))
-                Logger.log("d", "%d tokens saved." % len(self._tokens.keys()))
+                Logger.log("d", "'%d' tokens saved." % len(self._tokens.keys()))
             except ValueError:
                 self._tokens = {}
 
@@ -222,7 +221,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
         return self._auth_token
 
     def setToken(self, token: str):
-        Logger.log("d", "%s setToken: %s", self.getId(), token)
+        # Logger.log("d", "%s setToken: %s", self.getId(), token)
         self._auth_token = token
 
     def getModel(self) -> str:
@@ -322,7 +321,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
         self.get(url, self._onRequestFinished)
 
     def _upload(self):
-        Logger.log("d", "Start upload to {} with token {}".format(self._name, self._auth_token))
+        Logger.log("d", "Start upload to {}".format(self._name))
         if not self._auth_token:
             return
 
@@ -401,7 +400,6 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
                     resp = self._jsonReply(reply)
                     token = resp.get("token")
                     if self._auth_token != token:
-                        Logger.log("i", "New token: %s", token)
                         self._auth_token = token
                     self.checkStatus()  # check status and upload
 
