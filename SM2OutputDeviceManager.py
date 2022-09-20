@@ -34,8 +34,17 @@ except ImportError:
     QNetworkAccessManagerOperations = QNetworkAccessManager
     QNetworkRequestAttributes = QNetworkRequest
     QNetworkReplyNetworkErrors = QNetworkReply
-    QHostAddressBroadcast = QHostAddress.SpecialAddress.Broadcast
-    QIPv4Protocol = QAbstractSocket.NetworkLayerProtocol.IPv4Protocol
+
+    if hasattr(QHostAddress, 'Broadcast'):
+        QHostAddressBroadcast = QHostAddress.Broadcast
+    else:
+        QHostAddressBroadcast = QHostAddress.SpecialAddress.Broadcast
+
+    if hasattr(QAbstractSocket, 'IPv4Protocol'):
+        QIPv4Protocol = QAbstractSocket.IPv4Protocol
+    else:
+        QIPv4Protocol = QAbstractSocket.NetworkLayerProtocol.IPv4Protocol
+
 
 from cura.CuraApplication import CuraApplication
 from cura.PrinterOutput.NetworkedPrinterOutputDevice import NetworkedPrinterOutputDevice, AuthState
@@ -362,7 +371,7 @@ class SM2OutputDevice(NetworkedPrinterOutputDevice):
 
         if reply.error() not in (
             QNetworkReplyNetworkErrors.NoError,
-            QNetworkReplyNetworkErrors.AuthenticationRequiredError  # 204 is No Content, not and error
+            QNetworkReplyNetworkErrors.AuthenticationRequiredError  # 204 is No Content, not an error
         ):
             Logger.log("w", "Error %d from %s", reply.error(), http_url)
             self.setConnectionState(ConnectionState.Closed)
