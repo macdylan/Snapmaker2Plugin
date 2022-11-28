@@ -1,22 +1,22 @@
-from . import SM2OutputDeviceManager
-from . import SM2GCodeWriter
+from .OutputDevicePlugin import SM2OutputDevicePlugin
+from .GCodeWriter import SM2GCodeWriter
+
 
 def getMetaData():
     return {
         "mesh_writer": {
-            "output": [
-                {
-                    "extension": "gcode",
-                    "description": "Snapmaker G-code file",
-                    "mime_type": "text/x-gcode",
-                    "mode": SM2GCodeWriter.SM2GCodeWriter.OutputMode.TextMode
-                }
-            ]
+            "output": [{
+                "extension": "gcode",
+                "description": "Snapmaker 2 G-code file",
+                "mime_type": "text/x-gcode",
+                "mode": SM2GCodeWriter.OutputMode.TextMode
+            }]
         }
     }
 
+
 def register(app):
     return {
-        "output_device": SM2OutputDeviceManager.SM2OutputDeviceManager(),
-        "mesh_writer": SM2GCodeWriter.SM2GCodeWriter()
+        "output_device": SM2OutputDevicePlugin(),
+        "mesh_writer": SM2GCodeWriter()
     }

@@ -13,15 +13,14 @@ from cura.Utils.Threading import call_on_qt_thread
 try:
     from PyQt6.QtCore import QBuffer
     from PyQt6.QtGui import QImage
-    # QImageFormat = QImage.Format.Format_Indexed8
     QBufferOpenMode = QBuffer.OpenModeFlag.ReadWrite
 except ImportError:
     from PyQt5.QtCore import QBuffer
     from PyQt5.QtGui import QImage
-    # QImageFormat = QImage.Format_Indexed8
     QBufferOpenMode = QBuffer.ReadWrite
 
 from UM.i18n import i18nCatalog
+
 catalog = i18nCatalog("cura")
 
 
@@ -33,14 +32,22 @@ class SM2GCodeWriter(MeshWriter):
     PROCESSED_IDENTITY = ";Processed by Snapmaker2Plugin (https://github.com/macdylan/Snapmaker2Plugin)"
 
     @call_on_qt_thread
-    def write(self, stream, nodes, mode=MeshWriter.OutputMode.TextMode) -> bool:
+    def write(self,
+              stream,
+              nodes,
+              mode=MeshWriter.OutputMode.TextMode) -> bool:
         if mode != MeshWriter.OutputMode.TextMode:
-            Logger.log("e", "SM2GCodeWriter does not support non-text mode.")
-            self.setInformation(catalog.i18nc("@error:not supported", "SM2GCodeWriter does not support non-text mode."))
+            Logger.error("SM2GCodeWriter does not support non-text mode.")
+            self.setInformation(
+                catalog.i18nc(
+                    "@error:not supported",
+                    "SM2GCodeWriter does not support non-text mode."))
             return False
 
         gcode = StringIO()
-        writer = cast(MeshWriter, PluginRegistry.getInstance().getPluginObject("GCodeWriter"))
+        writer = cast(
+            MeshWriter,
+            PluginRegistry.getInstance().getPluginObject("GCodeWriter"))
         success = writer.write(gcode, None)
 
         if not success:
@@ -51,11 +58,11 @@ class SM2GCodeWriter(MeshWriter):
         try:
             result = self.mod(gcode)
             stream.write(result.getvalue())
-            Logger.log("i", "SM2GCodeWriter done")
+            Logger.info("SM2GCodeWriter done")
             return True
         except ModError as e:
             self.setInformation(str(e))
-            Logger.log("e", e)
+            Logger.error(e)
             return False
 
     def mod(self, data: StringIO) -> StringIO:
@@ -86,13 +93,16 @@ class SM2GCodeWriter(MeshWriter):
             p.write("\n")
 
         app = CuraApplication.getInstance()
-        print_time = int(app.getPrintInformation().currentPrintTime) * 1.07  # Times empirical parameter: 1.07
+        print_time = int(app.getPrintInformation().currentPrintTime
+                         ) * 1.07  # Times empirical parameter: 1.07
         print_speed = float(self._getValue("speed_infill"))
         print_temp = float(self._getValue("material_print_temperature"))
         bed_temp = float(self._getValue("material_bed_temperature")) or 0.0
 
         if not print_speed or not print_temp:
-            raise ModError("Unable to slice with the current settings: speed_infill or material_print_temperature")
+            raise ModError(
+                "Unable to slice with the current settings: speed_infill or material_print_temperature"
+            )
 
         p.write(";file_total_lines: %d\n" % len(gcodes))
         p.write(";estimated_time(s): %.0f\n" % print_time)
@@ -111,15 +121,15 @@ class SM2GCodeWriter(MeshWriter):
         return p
 
     def _createSnapshot(self) -> QImage:
-        Logger.log("d", "Creating thumbnail image...")
+        Logger.debug("Creating thumbnail image...")
         try:
-            return Snapshot.snapshot(width=150, height=150)  # .convertToFormat(QImageFormat)
+            return Snapshot.snapshot(width=240, height=160)
         except Exception:
             Logger.logException("w", "Failed to create snapshot image")
             return None
 
     def _encodeSnapshot(self, snapshot: QImage) -> str:
-        Logger.log("d", "Encoding thumbnail image...")
+        Logger.debug("Encoding thumbnail image...")
         try:
             thumbnail_buffer = QBuffer()
             thumbnail_buffer.open(QBufferOpenMode)
@@ -133,19 +143,7 @@ class SM2GCodeWriter(MeshWriter):
             Logger.logException("w", "Failed to encode snapshot image")
 
     def _getValue(self, key) -> str:
-        # app = CuraApplication.getInstance()
         stack = ExtruderManager.getInstance().getActiveExtruderStack()
-        # stack2 = app.getGlobalContainerStack()
-        # stack3 = app.getMachineManager()
-
-        # stack = None
-        # if stack1.hasProperty(key, "value"):
-        #     stack = stack1
-        # elif stack2.hasProperty(key, "value"):
-        #     stack = stack2
-        # elif stack3.hasProperty(key, "value"):
-        #     stack = stack3
-
         if not stack:
             return ""
 
@@ -155,15 +153,11 @@ class SM2GCodeWriter(MeshWriter):
         if str(GetType) == "float":
             GelValStr = "{:.4f}".format(GetVal).rstrip("0").rstrip(".")
         else:
-            # enum = Option list
             if str(GetType) == "enum":
-                # definition_option = key + " option " + str(GetVal)
                 get_option = str(GetVal)
                 GetOption = stack.getProperty(key, "options")
                 GetOptionDetail = GetOption[get_option]
-                # GelValStr=i18n_catalog.i18nc(definition_option, GetOptionDetail)
                 GelValStr = GetOptionDetail
-                # Logger.log("d", "GetType_doTree = %s ; %s ; %s ; %s",definition_option, GelValStr, GetOption, GetOptionDetail)
             else:
                 GelValStr = str(GetVal)
 
