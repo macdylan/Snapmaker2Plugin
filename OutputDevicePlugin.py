@@ -263,6 +263,7 @@ class SM2OutputDevicePlugin(OutputDevicePlugin):
             self.stop()
 
     def _isSM2Container(self) -> bool:
-        machine_name = Application.getInstance().getGlobalContainerStack().name
+        stack = Application.getInstance().getGlobalContainerStack()
+        machine_name = stack.getProperty("machine_name", "value")
         Logger.debug('machine name: %s', machine_name)
         return machine_name.startswith(MACHINE_SERIES)
