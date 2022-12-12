@@ -11,7 +11,7 @@ from UM.Application import Application
 from .qt_comp import *
 from .OutputDevice import SM2OutputDevice
 
-MACHINE_SERIES = "Snapmaker 2"
+MACHINE_SERIES = "Snapmaker A"
 DISCOVER_PORT = 20054
 DISCOVER_INTERVAL = 6000  # 6 seconds
 
