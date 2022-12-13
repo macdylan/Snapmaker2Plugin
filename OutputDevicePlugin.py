@@ -11,7 +11,7 @@ from UM.Application import Application
 from .qt_comp import *
 from .OutputDevice import SM2OutputDevice
 
-MACHINE_SERIES = "Snapmaker A"
+#MACHINE_SERIES = "Snapmaker A"
 DISCOVER_PORT = 20054
 DISCOVER_INTERVAL = 6000  # 6 seconds
 
@@ -87,7 +87,8 @@ class DiscoverSocket:
                 try:
                     message = bytes(data.data()).decode("utf-8")
                     self.dataReady.emit(message)
-                except UnicodeDecodeError:
+                except UnicodeDecodeError as e:
+                    Logger.error("error decoding data: %s", e)
                     pass
 
     def __collect(self) -> None:
@@ -101,7 +102,8 @@ class DiscoverSocket:
         while True:
             try:
                 msg, _ = self._socket.recvfrom(128)
-            except (TimeoutError, ConnectionError):
+            except (TimeoutError, ConnectionError) as e:
+                Logger.error("error receiving data: %s", e)
                 # normal timeout, or ConnectionError (including ConnectionAbortedError, ConnectionRefusedError,
                 # ConnectionResetError) errors raise by the peer
                 break
@@ -109,7 +111,8 @@ class DiscoverSocket:
             try:
                 message = msg.decode("utf-8")
                 self.dataReady.emit(message)
-            except UnicodeDecodeError:
+            except UnicodeDecodeError as e:
+                Logger.error("error decoding data: %s", e)
                 pass
 
 
@@ -204,6 +207,7 @@ class SM2OutputDevicePlugin(OutputDevicePlugin):
 
         msg: Snapmaker-DUMMY@127.0.0.1|model:Snapmaker 2 Model A350|status:IDLE
         """
+        Logger.debug("got msg: %s", msg)
         parts = msg.split("|")
         if len(parts) < 1 or "@" not in parts[0]:
             # invalid message
@@ -220,7 +224,8 @@ class SM2OutputDevicePlugin(OutputDevicePlugin):
             properties[key] = value
 
         model = properties.get("model", "")
-        if not model.startswith(MACHINE_SERIES):
+        Logger.debug("machine model is %s", model)
+        if not model.startswith("Snapmaker 2"):
             return
 
         device_id = self._deviceId(name, model)
@@ -268,5 +273,5 @@ class SM2OutputDevicePlugin(OutputDevicePlugin):
             return False
         machine_name = stack.getProperty("machine_name", "value")
         Logger.debug('machine name: %s', machine_name)
-        return machine_name.startswith(MACHINE_SERIES)
+        return machine_name.startswith("Snapmaker A")
 
