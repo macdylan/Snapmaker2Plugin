@@ -102,7 +102,7 @@ class DiscoverSocket:
         while True:
             try:
                 msg, _ = self._socket.recvfrom(128)
-            except (TimeoutError, ConnectionError) as e:
+            except (TimeoutError, ConnectionError, socket.timeout) as e:
                 Logger.error("error receiving data: %s", e)
                 # normal timeout, or ConnectionError (including ConnectionAbortedError, ConnectionRefusedError,
                 # ConnectionResetError) errors raise by the peer
@@ -274,4 +274,3 @@ class SM2OutputDevicePlugin(OutputDevicePlugin):
         machine_name = stack.getProperty("machine_name", "value")
         Logger.debug('machine name: %s', machine_name)
         return machine_name.startswith("Snapmaker A")
-
